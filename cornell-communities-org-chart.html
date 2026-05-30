@@ -166,8 +166,8 @@
   /* columns row */
   .columns {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 28px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 32px;
     width: 100%;
   }
 
@@ -189,33 +189,13 @@
     opacity: 0.35;
   }
 
-  /* sub-bus + sub-stubs (when a director has multiple direct reports) */
-  .sub-bus {
-    width: 80%;
-    height: 1px;
-    background: var(--cc-forest);
-    opacity: 0.35;
-  }
-
-  .reports {
-    display: grid;
-    gap: 16px;
-    width: 100%;
-  }
-  .reports.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .reports.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .reports.cols-1 { grid-template-columns: minmax(0, 1fr); max-width: 280px; margin: 0 auto; }
-
-  .report-cell { display: flex; flex-direction: column; align-items: center; }
-
   /* ---------- Card -------------------------------------------------- */
   .card {
     width: 100%;
-    max-width: 280px;
     background: var(--cc-white);
     border: 1px solid var(--border-subtle);
     border-radius: 8px;
-    padding: 20px 18px 18px;
+    padding: 20px 22px 18px;
     box-shadow: var(--shadow-sm);
     transition: box-shadow var(--dur-base) var(--ease-out),
                 border-color var(--dur-base) var(--ease-out);
@@ -223,6 +203,8 @@
     flex-direction: column;
     gap: 0;
     position: relative;
+    word-break: normal;
+    overflow-wrap: break-word;
   }
   .card:hover { box-shadow: var(--shadow-md); }
 
@@ -278,7 +260,7 @@
     background: var(--cc-forest);
     border-color: var(--cc-forest);
     color: var(--cc-cream);
-    max-width: 320px;
+    width: 360px;
     padding: 28px 26px 24px;
   }
   .card.executive .team-eyebrow { color: var(--cc-gold); }
@@ -296,33 +278,12 @@
   /* Manager variant: stone top accent */
   .card.manager { border-top: 3px solid var(--cc-stone); padding-top: 18px; }
 
-  /* Card sizing for deeper rows */
+  /* Smaller text variant for IC cards (column still full-width) */
   .card.compact {
-    max-width: 240px;
-    padding: 16px 14px 14px;
+    padding: 18px 20px 16px;
   }
-  .card.compact .role { font-size: 14px; margin-bottom: 6px; }
-  .card.compact .name { font-size: 12px; margin-bottom: 10px; }
-
-  /* Vacant variant: open seat — dashed, muted */
-  .card.vacant {
-    background: var(--cc-off-white);
-    border-style: dashed;
-    border-color: var(--border-default);
-    box-shadow: none;
-  }
-  .card.vacant .team-eyebrow { color: var(--cc-stone); }
-  .card.vacant .mini-rule { background: var(--cc-stone); opacity: 0.4; }
-  .card.vacant .role { color: var(--cc-stone); }
-  .card.vacant .name {
-    font-style: italic;
-    color: var(--cc-mid-gray);
-  }
-  .card.vacant .level {
-    color: var(--cc-stone);
-    background: transparent;
-    border-style: dashed;
-  }
+  .card.compact .role { font-size: 15px; margin-bottom: 6px; }
+  .card.compact .name { font-size: 13px; margin-bottom: 12px; }
 
   /* ---------- Legend ---------------------------------------------------- */
   .legend {
@@ -389,17 +350,11 @@
   /* ---------- Responsive ------------------------------------------------ */
   @media (max-width: 1100px) {
     .columns { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px; }
-    .reports.cols-4,
-    .reports.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 640px) {
-    .masthead { padding: 32px 24px; }
-    .masthead h1 { font-size: 40px; }
     .page { padding: 48px 24px; }
     .columns { grid-template-columns: minmax(0, 1fr); }
-    .reports.cols-4,
-    .reports.cols-3 { grid-template-columns: minmax(0, 1fr); }
-    .card { max-width: 100%; }
+    .card.executive { width: 100%; }
     .legend { gap: 32px; }
   }
 </style>
@@ -424,7 +379,7 @@
     <div class="spine"></div>
     <div class="bus"></div>
 
-    <!-- Level 2: Directors -->
+    <!-- Level 2: Three director columns -->
     <div class="columns">
 
       <!-- Deal Team column -->
@@ -439,69 +394,45 @@
         </article>
 
         <div class="connector"></div>
-        <div class="sub-bus"></div>
-        <div class="reports cols-3">
-          <div class="report-cell">
-            <div class="stub"></div>
-            <article class="card compact">
-              <p class="team-eyebrow">Deal Team</p>
-              <div class="mini-rule"></div>
-              <h4 class="role">Outbound Specialist</h4>
-              <p class="name">Omar Hernandez</p>
-              <span class="level">IC</span>
-            </article>
-          </div>
-          <div class="report-cell">
-            <div class="stub"></div>
-            <article class="card compact">
-              <p class="team-eyebrow">Deal Team</p>
-              <div class="mini-rule"></div>
-              <h4 class="role">Underwriting Specialist</h4>
-              <p class="name">Rishu Kallihalli</p>
-              <span class="level">IC</span>
-            </article>
-          </div>
-          <div class="report-cell">
-            <div class="stub"></div>
-            <article class="card compact">
-              <p class="team-eyebrow">Deal Team</p>
-              <div class="mini-rule"></div>
-              <h4 class="role">Data Specialist</h4>
-              <p class="name">Rommel Galvez</p>
-              <span class="level">IC</span>
-            </article>
-          </div>
-        </div>
+        <article class="card compact">
+          <p class="team-eyebrow">Deal Team</p>
+          <div class="mini-rule"></div>
+          <h4 class="role">Outbound Specialist</h4>
+          <p class="name">Omar Hernandez</p>
+          <span class="level">IC</span>
+        </article>
+
+        <div class="connector"></div>
+        <article class="card compact">
+          <p class="team-eyebrow">Deal Team</p>
+          <div class="mini-rule"></div>
+          <h4 class="role">Underwriting Specialist</h4>
+          <p class="name">Rishu Kallihalli</p>
+          <span class="level">IC</span>
+        </article>
+
+        <div class="connector"></div>
+        <article class="card compact">
+          <p class="team-eyebrow">Deal Team</p>
+          <div class="mini-rule"></div>
+          <h4 class="role">Data Specialist</h4>
+          <p class="name">Rommel Galvez</p>
+          <span class="level">IC</span>
+        </article>
       </div>
 
-      <!-- Portfolio Operations column -->
+      <!-- Operations Team column -->
       <div class="column">
         <div class="stub"></div>
         <article class="card director">
           <p class="team-eyebrow">Operations Team</p>
           <div class="mini-rule"></div>
-          <h3 class="role">Director of Portfolio Operations</h3>
+          <h3 class="role">Director of Operations</h3>
           <p class="name">Loren Smith</p>
           <span class="level">Director</span>
         </article>
 
         <div class="connector"></div>
-        <div class="reports cols-1">
-          <div class="report-cell">
-            <article class="card compact vacant">
-              <p class="team-eyebrow">Operations Team</p>
-              <div class="mini-rule"></div>
-              <h4 class="role">Operations Coordinator</h4>
-              <p class="name">Vacant</p>
-              <span class="level">IC · Open</span>
-            </article>
-          </div>
-        </div>
-      </div>
-
-      <!-- Property Operations column -->
-      <div class="column">
-        <div class="stub"></div>
         <article class="card director">
           <p class="team-eyebrow">Operations Team</p>
           <div class="mini-rule"></div>
@@ -511,64 +442,52 @@
         </article>
 
         <div class="connector"></div>
-        <div class="reports cols-1">
-          <div class="report-cell">
-            <article class="card manager">
-              <p class="team-eyebrow">Operations Team</p>
-              <div class="mini-rule"></div>
-              <h4 class="role">Operations Manager</h4>
-              <p class="name">Melia Pope</p>
-              <span class="level">Manager</span>
-            </article>
-            <div class="connector"></div>
-            <div class="sub-bus"></div>
-            <div class="reports cols-4" style="margin-top:0;">
-              <div class="report-cell">
-                <div class="stub"></div>
-                <article class="card compact">
-                  <p class="team-eyebrow">Operations Team</p>
-                  <div class="mini-rule"></div>
-                  <h4 class="role">Resident Relations &amp; Leasing</h4>
-                  <p class="name">Betty Bernabe</p>
-                  <span class="level">IC</span>
-                </article>
-              </div>
-              <div class="report-cell">
-                <div class="stub"></div>
-                <article class="card compact">
-                  <p class="team-eyebrow">Operations Team</p>
-                  <div class="mini-rule"></div>
-                  <h4 class="role">Maintenance Specialist</h4>
-                  <p class="name">Ellyssa Chua</p>
-                  <span class="level">IC</span>
-                </article>
-              </div>
-              <div class="report-cell">
-                <div class="stub"></div>
-                <article class="card compact">
-                  <p class="team-eyebrow">Operations Team</p>
-                  <div class="mini-rule"></div>
-                  <h4 class="role">Finance &amp; AP Specialist</h4>
-                  <p class="name">Vicky Tesorio</p>
-                  <span class="level">IC</span>
-                </article>
-              </div>
-              <div class="report-cell">
-                <div class="stub"></div>
-                <article class="card compact">
-                  <p class="team-eyebrow">Operations Team</p>
-                  <div class="mini-rule"></div>
-                  <h4 class="role">Collections Specialist</h4>
-                  <p class="name">Hazel Ecchevaria</p>
-                  <span class="level">IC</span>
-                </article>
-              </div>
-            </div>
-          </div>
-        </div>
+        <article class="card manager">
+          <p class="team-eyebrow">Operations Team</p>
+          <div class="mini-rule"></div>
+          <h4 class="role">Operations Manager</h4>
+          <p class="name">Melia Pope</p>
+          <span class="level">Manager</span>
+        </article>
+
+        <div class="connector"></div>
+        <article class="card compact">
+          <p class="team-eyebrow">Operations Team</p>
+          <div class="mini-rule"></div>
+          <h4 class="role">Resident Relations &amp; Leasing Specialist</h4>
+          <p class="name">Betty Bernabe</p>
+          <span class="level">IC</span>
+        </article>
+
+        <div class="connector"></div>
+        <article class="card compact">
+          <p class="team-eyebrow">Operations Team</p>
+          <div class="mini-rule"></div>
+          <h4 class="role">Maintenance Specialist</h4>
+          <p class="name">Ellyssa Chua</p>
+          <span class="level">IC</span>
+        </article>
+
+        <div class="connector"></div>
+        <article class="card compact">
+          <p class="team-eyebrow">Operations Team</p>
+          <div class="mini-rule"></div>
+          <h4 class="role">Finance &amp; AP Specialist</h4>
+          <p class="name">Vicky Tesorio</p>
+          <span class="level">IC</span>
+        </article>
+
+        <div class="connector"></div>
+        <article class="card compact">
+          <p class="team-eyebrow">Operations Team</p>
+          <div class="mini-rule"></div>
+          <h4 class="role">Collections Specialist</h4>
+          <p class="name">Hazel Ecchevaria</p>
+          <span class="level">IC</span>
+        </article>
       </div>
 
-      <!-- Investor Relations column -->
+      <!-- Investor Team column -->
       <div class="column">
         <div class="stub"></div>
         <article class="card director">
@@ -580,39 +499,31 @@
         </article>
 
         <div class="connector"></div>
-        <div class="sub-bus"></div>
-        <div class="reports cols-3">
-          <div class="report-cell">
-            <div class="stub"></div>
-            <article class="card compact">
-              <p class="team-eyebrow">Investor Team</p>
-              <div class="mini-rule"></div>
-              <h4 class="role">IR &amp; Branding Specialist</h4>
-              <p class="name">Sharved Maganbeharie</p>
-              <span class="level">IC</span>
-            </article>
-          </div>
-          <div class="report-cell">
-            <div class="stub"></div>
-            <article class="card compact">
-              <p class="team-eyebrow">Investor Team</p>
-              <div class="mini-rule"></div>
-              <h4 class="role">Social Engagement Specialist</h4>
-              <p class="name">Stephanie Ezenedunkwe</p>
-              <span class="level">IC</span>
-            </article>
-          </div>
-          <div class="report-cell">
-            <div class="stub"></div>
-            <article class="card compact">
-              <p class="team-eyebrow">Investor Team</p>
-              <div class="mini-rule"></div>
-              <h4 class="role">Content Editor</h4>
-              <p class="name">Kyla Guevarra</p>
-              <span class="level">IC</span>
-            </article>
-          </div>
-        </div>
+        <article class="card compact">
+          <p class="team-eyebrow">Investor Team</p>
+          <div class="mini-rule"></div>
+          <h4 class="role">IR &amp; Branding Specialist</h4>
+          <p class="name">Sharved Maganbeharie</p>
+          <span class="level">IC</span>
+        </article>
+
+        <div class="connector"></div>
+        <article class="card compact">
+          <p class="team-eyebrow">Investor Team</p>
+          <div class="mini-rule"></div>
+          <h4 class="role">Social Engagement Specialist</h4>
+          <p class="name">Stephanie Ezenedunkwe</p>
+          <span class="level">IC</span>
+        </article>
+
+        <div class="connector"></div>
+        <article class="card compact">
+          <p class="team-eyebrow">Investor Team</p>
+          <div class="mini-rule"></div>
+          <h4 class="role">Content Editor</h4>
+          <p class="name">Kyla Guevarra</p>
+          <span class="level">IC</span>
+        </article>
       </div>
 
     </div>
@@ -649,7 +560,7 @@
         <strong>15</strong> people · <strong>4</strong> teams<br>
         <strong>1</strong> managing partner<br>
         <strong>4</strong> directors · <strong>1</strong> manager<br>
-        <strong>10</strong> specialists / ICs · <strong>1</strong> open role
+        <strong>10</strong> specialists / ICs
       </p>
     </div>
   </section>
