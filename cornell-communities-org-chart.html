@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cornell Communities · Organizational Chart</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --cc-forest:        #003208;
+    --cc-forest-900:    #002205;
+    --cc-forest-700:    #0b4a18;
+    --cc-gold:          #C8A456;
+    --cc-gold-600:      #b08f3f;
+    --cc-cream:         #F4EFE6;
+    --cc-cream-200:     #ece5d6;
+    --cc-dark-gray:     #1D1E20;
+    --cc-stone:         #6A6456;
+    --cc-mid-gray:      #666666;
+    --cc-light-gray:    #E8E8E8;
+    --cc-white:         #FFFFFF;
+    --cc-off-white:     #FAF8F3;
+    --border-subtle:    var(--cc-light-gray);
+    --border-default:   #d8d5cd;
+    --border-on-dark:   rgba(244, 239, 230, 0.16);
+    --fg-on-dark-muted: #bfb8a4;
+    --font-wordmark:    'Abril Fatface', 'Playfair Display', Georgia, serif;
+    --font-sans:        'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono:        'DM Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+    --shadow-sm:        0 1px 3px rgba(29, 30, 32, 0.06), 0 1px 2px rgba(29, 30, 32, 0.04);
+    --shadow-md:        0 4px 12px rgba(29, 30, 32, 0.06), 0 1px 2px rgba(29, 30, 32, 0.04);
+    --rule-width:       56px;
+    --rule-height:      2px;
+    --ease-out:         cubic-bezier(0.2, 0.6, 0.2, 1);
+    --dur-base:         220ms;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font-sans);
+    color: var(--cc-dark-gray);
+    background: var(--cc-cream);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+
+  /* ---------- Header ---------------------------------------------------- */
+  .masthead {
+    background: var(--cc-forest);
+    color: var(--cc-cream);
+    padding: 56px 48px 48px;
+  }
+  .masthead-inner {
+    max-width: 1440px;
+    margin: 0 auto;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+  .masthead .gold-rule {
+    width: var(--rule-width);
+    height: var(--rule-height);
+    background: var(--cc-gold);
+    margin: 0 0 20px;
+  }
+  .masthead .eyebrow {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--cc-gold);
+    margin: 0 0 14px;
+  }
+  .masthead h1 {
+    font-family: var(--font-wordmark);
+    font-weight: 400;
+    font-size: 56px;
+    line-height: 1.05;
+    letter-spacing: -0.005em;
+    margin: 0 0 6px;
+    color: var(--cc-cream);
+  }
+  .masthead .subtitle {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: 18px;
+    line-height: 1.4;
+    color: var(--fg-on-dark-muted);
+    margin: 0;
+    max-width: 520px;
+  }
+  .masthead-meta {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: var(--fg-on-dark-muted);
+    text-align: right;
+    line-height: 1.6;
+  }
+  .masthead-meta strong {
+    color: var(--cc-cream);
+    font-weight: 500;
+  }
+
+  /* ---------- Page frame ------------------------------------------------ */
+  .page {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 80px 48px 96px;
+  }
+
+  /* ---------- Eyebrow -------------------------------------------------- */
+  .eyebrow {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--cc-forest);
+    margin: 0;
+    line-height: 1;
+  }
+  .gold-rule {
+    display: block;
+    width: var(--rule-width);
+    height: var(--rule-height);
+    background: var(--cc-gold);
+    border: 0;
+    margin: 0 0 16px;
+  }
+
+  /* ---------- Tree primitives ------------------------------------------ */
+  .tree { display: flex; flex-direction: column; align-items: center; gap: 0; }
+
+  .row-exec {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    margin-bottom: 0;
+  }
+
+  /* vertical spine from exec down */
+  .spine {
+    width: 1px;
+    height: 48px;
+    background: var(--cc-forest);
+    opacity: 0.35;
+  }
+
+  /* horizontal bus across columns */
+  .bus {
+    position: relative;
+    width: 100%;
+    height: 1px;
+    background: var(--cc-forest);
+    opacity: 0.35;
+    margin: 0;
+  }
+
+  /* columns row */
+  .columns {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 28px;
+    width: 100%;
+  }
+
+  .column { display: flex; flex-direction: column; align-items: center; gap: 0; }
+
+  /* stub from bus down into each director card */
+  .stub {
+    width: 1px;
+    height: 28px;
+    background: var(--cc-forest);
+    opacity: 0.35;
+  }
+
+  /* connector inside a column between cards */
+  .connector {
+    width: 1px;
+    height: 20px;
+    background: var(--cc-forest);
+    opacity: 0.35;
+  }
+
+  /* sub-bus + sub-stubs (when a director has multiple direct reports) */
+  .sub-bus {
+    width: 80%;
+    height: 1px;
+    background: var(--cc-forest);
+    opacity: 0.35;
+  }
+
+  .reports {
+    display: grid;
+    gap: 16px;
+    width: 100%;
+  }
+  .reports.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .reports.cols-1 { grid-template-columns: minmax(0, 1fr); max-width: 280px; margin: 0 auto; }
+
+  .report-cell { display: flex; flex-direction: column; align-items: center; }
+
+  /* ---------- Card -------------------------------------------------- */
+  .card {
+    width: 100%;
+    max-width: 280px;
+    background: var(--cc-white);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 20px 18px 18px;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow var(--dur-base) var(--ease-out),
+                border-color var(--dur-base) var(--ease-out);
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+  }
+  .card:hover { box-shadow: var(--shadow-md); }
+
+  .card .team-eyebrow {
+    font-family: var(--font-sans);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--cc-forest);
+    margin: 0 0 8px;
+    line-height: 1;
+  }
+  .card .mini-rule {
+    width: 28px;
+    height: 2px;
+    background: var(--cc-gold);
+    margin: 0 0 14px;
+  }
+  .card .role {
+    font-family: var(--font-sans);
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--cc-dark-gray);
+    margin: 0 0 8px;
+    letter-spacing: -0.005em;
+  }
+  .card .name {
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.4;
+    color: var(--cc-stone);
+    margin: 0 0 14px;
+  }
+  .card .level {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--cc-stone);
+    padding: 4px 8px;
+    border: 1px solid var(--border-subtle);
+    background: var(--cc-off-white);
+    border-radius: 4px;
+    align-self: flex-start;
+  }
+
+  /* Executive variant: dark forest */
+  .card.executive {
+    background: var(--cc-forest);
+    border-color: var(--cc-forest);
+    color: var(--cc-cream);
+    max-width: 320px;
+    padding: 28px 26px 24px;
+  }
+  .card.executive .team-eyebrow { color: var(--cc-gold); }
+  .card.executive .role { color: var(--cc-cream); font-size: 18px; }
+  .card.executive .name { color: var(--fg-on-dark-muted); font-size: 14px; }
+  .card.executive .level {
+    background: transparent;
+    border-color: var(--border-on-dark);
+    color: var(--cc-gold);
+  }
+
+  /* Director variant: forest top accent */
+  .card.director { border-top: 3px solid var(--cc-forest); padding-top: 18px; }
+
+  /* Manager variant: stone top accent */
+  .card.manager { border-top: 3px solid var(--cc-stone); padding-top: 18px; }
+
+  /* Card sizing for deeper rows */
+  .card.compact {
+    max-width: 240px;
+    padding: 16px 14px 14px;
+  }
+  .card.compact .role { font-size: 14px; margin-bottom: 6px; }
+  .card.compact .name { font-size: 12px; margin-bottom: 10px; }
+
+  /* ---------- Legend ---------------------------------------------------- */
+  .legend {
+    margin-top: 80px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: flex-start;
+    gap: 64px;
+    flex-wrap: wrap;
+  }
+  .legend-block { display: flex; flex-direction: column; gap: 12px; min-width: 200px; }
+  .legend-block .gold-rule { margin-bottom: 4px; }
+  .legend-block h4 {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--cc-forest);
+    margin: 0;
+  }
+  .legend-items { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+  .legend-items li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    color: var(--cc-stone);
+  }
+  .legend-items .swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid var(--border-subtle);
+    flex: none;
+  }
+  .legend-items .swatch.exec   { background: var(--cc-forest); border-color: var(--cc-forest); }
+  .legend-items .swatch.dir    { background: var(--cc-white); border-top: 3px solid var(--cc-forest); }
+  .legend-items .swatch.mgr    { background: var(--cc-white); border-top: 3px solid var(--cc-stone); }
+  .legend-items .swatch.ic     { background: var(--cc-white); }
+
+  .meta {
+    margin-top: 48px;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: var(--cc-stone);
+    line-height: 1.6;
+  }
+  .meta strong { color: var(--cc-dark-gray); font-weight: 500; }
+
+  /* ---------- Print ----------------------------------------------------- */
+  @media print {
+    body { background: var(--cc-cream); }
+    .masthead { padding: 32px; }
+    .page { padding: 32px; }
+    .card { box-shadow: none; }
+    .card.executive { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .masthead { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .legend { page-break-inside: avoid; }
+  }
+
+  /* ---------- Responsive ------------------------------------------------ */
+  @media (max-width: 1100px) {
+    .columns { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px; }
+    .reports.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 640px) {
+    .masthead { padding: 32px 24px; }
+    .masthead h1 { font-size: 40px; }
+    .page { padding: 48px 24px; }
+    .columns { grid-template-columns: minmax(0, 1fr); }
+    .reports.cols-3 { grid-template-columns: minmax(0, 1fr); }
+    .card { max-width: 100%; }
+    .legend { gap: 32px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div>
+      <div class="gold-rule"></div>
+      <p class="eyebrow">Organizational Chart</p>
+      <h1>Cornell Communities</h1>
+      <p class="subtitle">A manufactured housing community investment firm. Acquired and operated in-house, by the team below.</p>
+    </div>
+    <div class="masthead-meta">
+      <div><strong>15 people</strong></div>
+      <div>4 teams · 1 firm</div>
+      <div>Updated May 2026</div>
+    </div>
+  </div>
+</header>
+
+<main class="page">
+
+  <div class="tree">
+
+    <!-- Level 1: Executive -->
+    <div class="row-exec">
+      <article class="card executive">
+        <p class="team-eyebrow">Executive Team</p>
+        <div class="mini-rule"></div>
+        <h2 class="role">Managing Partner</h2>
+        <p class="name">Leo Young</p>
+        <span class="level">Executive</span>
+      </article>
+    </div>
+
+    <div class="spine"></div>
+    <div class="bus"></div>
+
+    <!-- Level 2: Directors -->
+    <div class="columns">
+
+      <!-- Deal Team column -->
+      <div class="column">
+        <div class="stub"></div>
+        <article class="card director">
+          <p class="team-eyebrow">Deal Team</p>
+          <div class="mini-rule"></div>
+          <h3 class="role">Director of Acquisitions</h3>
+          <p class="name">Dominic Bologna</p>
+          <span class="level">Director</span>
+        </article>
+
+        <div class="connector"></div>
+        <div class="sub-bus"></div>
+        <div class="reports cols-3">
+          <div class="report-cell">
+            <div class="stub"></div>
+            <article class="card compact">
+              <p class="team-eyebrow">Deal Team</p>
+              <div class="mini-rule"></div>
+              <h4 class="role">Outbound Specialist</h4>
+              <p class="name">Omar Hernandez</p>
+              <span class="level">IC</span>
+            </article>
+          </div>
+          <div class="report-cell">
+            <div class="stub"></div>
+            <article class="card compact">
+              <p class="team-eyebrow">Deal Team</p>
+              <div class="mini-rule"></div>
+              <h4 class="role">Underwriting Specialist</h4>
+              <p class="name">Rishu Kallihalli</p>
+              <span class="level">IC</span>
+            </article>
+          </div>
+          <div class="report-cell">
+            <div class="stub"></div>
+            <article class="card compact">
+              <p class="team-eyebrow">Deal Team</p>
+              <div class="mini-rule"></div>
+              <h4 class="role">Data Specialist</h4>
+              <p class="name">Rommel Galvez</p>
+              <span class="level">IC</span>
+            </article>
+          </div>
+        </div>
+      </div>
+
+      <!-- Portfolio Operations column -->
+      <div class="column">
+        <div class="stub"></div>
+        <article class="card director">
+          <p class="team-eyebrow">Operations Team</p>
+          <div class="mini-rule"></div>
+          <h3 class="role">Director of Portfolio Operations</h3>
+          <p class="name">Loren Smith</p>
+          <span class="level">Director</span>
+        </article>
+
+        <div class="connector"></div>
+        <div class="reports cols-1">
+          <div class="report-cell">
+            <article class="card compact">
+              <p class="team-eyebrow">Operations Team</p>
+              <div class="mini-rule"></div>
+              <h4 class="role">Operations Coordinator</h4>
+              <p class="name">Andrea Marinay</p>
+              <span class="level">IC</span>
+            </article>
+          </div>
+        </div>
+      </div>
+
+      <!-- Property Operations column -->
+      <div class="column">
+        <div class="stub"></div>
+        <article class="card director">
+          <p class="team-eyebrow">Operations Team</p>
+          <div class="mini-rule"></div>
+          <h3 class="role">Director of Property Operations</h3>
+          <p class="name">Jaxon Graves</p>
+          <span class="level">Director</span>
+        </article>
+
+        <div class="connector"></div>
+        <div class="reports cols-1">
+          <div class="report-cell">
+            <article class="card manager">
+              <p class="team-eyebrow">Operations Team</p>
+              <div class="mini-rule"></div>
+              <h4 class="role">Operations Manager</h4>
+              <p class="name">Melia Pope</p>
+              <span class="level">Manager</span>
+            </article>
+            <div class="connector"></div>
+            <div class="sub-bus"></div>
+            <div class="reports cols-3" style="margin-top:0;">
+              <div class="report-cell">
+                <div class="stub"></div>
+                <article class="card compact">
+                  <p class="team-eyebrow">Operations Team</p>
+                  <div class="mini-rule"></div>
+                  <h4 class="role">Resident Relations &amp; Leasing</h4>
+                  <p class="name">Betty Bernabe</p>
+                  <span class="level">IC</span>
+                </article>
+              </div>
+              <div class="report-cell">
+                <div class="stub"></div>
+                <article class="card compact">
+                  <p class="team-eyebrow">Operations Team</p>
+                  <div class="mini-rule"></div>
+                  <h4 class="role">Maintenance Specialist</h4>
+                  <p class="name">Ellyssa Chua</p>
+                  <span class="level">IC</span>
+                </article>
+              </div>
+              <div class="report-cell">
+                <div class="stub"></div>
+                <article class="card compact">
+                  <p class="team-eyebrow">Operations Team</p>
+                  <div class="mini-rule"></div>
+                  <h4 class="role">Finance &amp; AP Specialist</h4>
+                  <p class="name">Vicky Tesorio</p>
+                  <span class="level">IC</span>
+                </article>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Investor Relations column -->
+      <div class="column">
+        <div class="stub"></div>
+        <article class="card director">
+          <p class="team-eyebrow">Investor Team</p>
+          <div class="mini-rule"></div>
+          <h3 class="role">Director of Investor Relations</h3>
+          <p class="name">Leo Young</p>
+          <span class="level">Director</span>
+        </article>
+
+        <div class="connector"></div>
+        <div class="sub-bus"></div>
+        <div class="reports cols-3">
+          <div class="report-cell">
+            <div class="stub"></div>
+            <article class="card compact">
+              <p class="team-eyebrow">Investor Team</p>
+              <div class="mini-rule"></div>
+              <h4 class="role">IR &amp; Branding Specialist</h4>
+              <p class="name">Sharved Maganbeharie</p>
+              <span class="level">IC</span>
+            </article>
+          </div>
+          <div class="report-cell">
+            <div class="stub"></div>
+            <article class="card compact">
+              <p class="team-eyebrow">Investor Team</p>
+              <div class="mini-rule"></div>
+              <h4 class="role">Social Engagement Specialist</h4>
+              <p class="name">Stephanie Ezenedunkwe</p>
+              <span class="level">IC</span>
+            </article>
+          </div>
+          <div class="report-cell">
+            <div class="stub"></div>
+            <article class="card compact">
+              <p class="team-eyebrow">Investor Team</p>
+              <div class="mini-rule"></div>
+              <h4 class="role">Content Editor</h4>
+              <p class="name">Kyla Guevarra</p>
+              <span class="level">IC</span>
+            </article>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Legend / Footer -->
+  <section class="legend">
+    <div class="legend-block">
+      <div class="gold-rule"></div>
+      <h4>Teams</h4>
+      <ul class="legend-items">
+        <li><span class="swatch exec"></span>Executive Team</li>
+        <li><span class="swatch ic"></span>Deal Team</li>
+        <li><span class="swatch ic"></span>Operations Team</li>
+        <li><span class="swatch ic"></span>Investor Team</li>
+      </ul>
+    </div>
+
+    <div class="legend-block">
+      <div class="gold-rule"></div>
+      <h4>Levels</h4>
+      <ul class="legend-items">
+        <li><span class="swatch exec"></span>Executive</li>
+        <li><span class="swatch dir"></span>Director</li>
+        <li><span class="swatch mgr"></span>Manager</li>
+        <li><span class="swatch ic"></span>Individual contributor</li>
+      </ul>
+    </div>
+
+    <div class="legend-block">
+      <div class="gold-rule"></div>
+      <h4>By the numbers</h4>
+      <p class="meta" style="margin-top:0;">
+        <strong>15</strong> people · <strong>4</strong> teams<br>
+        <strong>1</strong> managing partner<br>
+        <strong>4</strong> directors · <strong>1</strong> manager<br>
+        <strong>10</strong> specialists / ICs
+      </p>
+    </div>
+  </section>
+
+</main>
+
+</body>
+</html>
