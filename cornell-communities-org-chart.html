@@ -202,6 +202,7 @@
     gap: 16px;
     width: 100%;
   }
+  .reports.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .reports.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .reports.cols-1 { grid-template-columns: minmax(0, 1fr); max-width: 280px; margin: 0 auto; }
 
@@ -303,6 +304,26 @@
   .card.compact .role { font-size: 14px; margin-bottom: 6px; }
   .card.compact .name { font-size: 12px; margin-bottom: 10px; }
 
+  /* Vacant variant: open seat — dashed, muted */
+  .card.vacant {
+    background: var(--cc-off-white);
+    border-style: dashed;
+    border-color: var(--border-default);
+    box-shadow: none;
+  }
+  .card.vacant .team-eyebrow { color: var(--cc-stone); }
+  .card.vacant .mini-rule { background: var(--cc-stone); opacity: 0.4; }
+  .card.vacant .role { color: var(--cc-stone); }
+  .card.vacant .name {
+    font-style: italic;
+    color: var(--cc-mid-gray);
+  }
+  .card.vacant .level {
+    color: var(--cc-stone);
+    background: transparent;
+    border-style: dashed;
+  }
+
   /* ---------- Legend ---------------------------------------------------- */
   .legend {
     margin-top: 80px;
@@ -368,6 +389,7 @@
   /* ---------- Responsive ------------------------------------------------ */
   @media (max-width: 1100px) {
     .columns { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px; }
+    .reports.cols-4,
     .reports.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 640px) {
@@ -375,6 +397,7 @@
     .masthead h1 { font-size: 40px; }
     .page { padding: 48px 24px; }
     .columns { grid-template-columns: minmax(0, 1fr); }
+    .reports.cols-4,
     .reports.cols-3 { grid-template-columns: minmax(0, 1fr); }
     .card { max-width: 100%; }
     .legend { gap: 32px; }
@@ -392,7 +415,7 @@
       <p class="subtitle">A manufactured housing community investment firm. Acquired and operated in-house, by the team below.</p>
     </div>
     <div class="masthead-meta">
-      <div><strong>15 people</strong></div>
+      <div><strong>15 people</strong> · 1 open role</div>
       <div>4 teams · 1 firm</div>
       <div>Updated May 2026</div>
     </div>
@@ -481,12 +504,12 @@
         <div class="connector"></div>
         <div class="reports cols-1">
           <div class="report-cell">
-            <article class="card compact">
+            <article class="card compact vacant">
               <p class="team-eyebrow">Operations Team</p>
               <div class="mini-rule"></div>
               <h4 class="role">Operations Coordinator</h4>
-              <p class="name">Andrea Marinay</p>
-              <span class="level">IC</span>
+              <p class="name">Vacant</p>
+              <span class="level">IC · Open</span>
             </article>
           </div>
         </div>
@@ -515,7 +538,7 @@
             </article>
             <div class="connector"></div>
             <div class="sub-bus"></div>
-            <div class="reports cols-3" style="margin-top:0;">
+            <div class="reports cols-4" style="margin-top:0;">
               <div class="report-cell">
                 <div class="stub"></div>
                 <article class="card compact">
@@ -543,6 +566,16 @@
                   <div class="mini-rule"></div>
                   <h4 class="role">Finance &amp; AP Specialist</h4>
                   <p class="name">Vicky Tesorio</p>
+                  <span class="level">IC</span>
+                </article>
+              </div>
+              <div class="report-cell">
+                <div class="stub"></div>
+                <article class="card compact">
+                  <p class="team-eyebrow">Operations Team</p>
+                  <div class="mini-rule"></div>
+                  <h4 class="role">Collections Specialist</h4>
+                  <p class="name">Hazel Ecchevaria</p>
                   <span class="level">IC</span>
                 </article>
               </div>
@@ -632,7 +665,7 @@
         <strong>15</strong> people · <strong>4</strong> teams<br>
         <strong>1</strong> managing partner<br>
         <strong>4</strong> directors · <strong>1</strong> manager<br>
-        <strong>10</strong> specialists / ICs
+        <strong>10</strong> specialists / ICs · <strong>1</strong> open role
       </p>
     </div>
   </section>
