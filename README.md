@@ -10,6 +10,7 @@ A local [Model Context Protocol](https://modelcontextprotocol.io/) server that c
 | `get_tenant_ledger` | Pull tenant ledger / payment history by name or unit |
 | `add_tenant_note` | Write notes to a tenant's record |
 | `get_rent_roll` | Pull current rent roll for a property |
+| `get_collections_rate` | Compute billed vs collected (and rate %) for a property over a date range, with per-tenant breakdown |
 
 ## Setup
 
