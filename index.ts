@@ -317,6 +317,61 @@ server.tool(
   }
 );
 
+// ── Tool 5: Get Collections Rate ──
+
+server.tool(
+  "get_collections_rate",
+  "Compute the collections rate for a property over a date range: total billed (charges) vs total collected (payments), with per-tenant breakdown sorted worst-to-best. Use this to assess payment performance per park.",
+  {
+    property_name: z.string().describe("Property name to compute collections rate for (partial match supported, e.g. 'Sunflower Estates')"),
+    start_date: z.string().describe("Start of the date range, inclusive (ISO YYYY-MM-DD)"),
+    end_date: z.string().describe("End of the date range, inclusive (ISO YYYY-MM-DD)"),
+  },
+  async ({ property_name, start_date, end_date }) => {
+    try {
+      const property = await client.findPropertyByName(property_name);
+      if (!property) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `No property found matching "${property_name}". Try a different name.`,
+            },
+          ],
+        };
+      }
+
+      const result = await client.getCollectionsRate(property.PropertyID, start_date, end_date);
+
+      if (result.PerTenant.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `No charge or payment activity found at ${property.Name} between ${start_date} and ${end_date}. If you expected activity, the ledger Type values may differ from "Charge"/"Payment" — check a tenant's ledger via get_tenant_ledger and update the filter.`,
+            },
+          ],
+        };
+      }
+
+      const ratePct = (result.Rate * 100).toFixed(1);
+      let output = `## Collections Rate — ${property.Name} (${start_date} → ${end_date})\n\n`;
+      output += `Billed: **${formatCurrency(result.TotalBilled)}** | Collected: **${formatCurrency(result.TotalCollected)}** | Rate: **${ratePct}%**\n`;
+      output += `Tenants with activity: ${result.PerTenant.length}\n\n`;
+      output += `| Tenant | Unit | Billed | Collected | Rate |\n`;
+      output += `|--------|------|--------|-----------|------|\n`;
+
+      for (const r of result.PerTenant) {
+        output += `| ${r.TenantName} | ${r.UnitName} | ${formatCurrency(r.Billed)} | ${formatCurrency(r.Collected)} | ${(r.Rate * 100).toFixed(1)}% |\n`;
+      }
+
+      return { content: [{ type: "text" as const, text: output }] };
+    } catch (err) {
+      return { content: [{ type: "text" as const, text: formatError(err) }], isError: true };
+    }
+  }
+);
+
 // ── Start Server ──
 
 async function main() {

@@ -198,6 +198,76 @@ export class RentManagerClient {
     }
   }
 
+  // ── Collections Rate ──
+  //
+  // Assumptions to validate against a real RM /Tenants/{id}/History response:
+  //   - ChargeItem.Type is exactly "Charge" / "Payment" / "Credit" (per types.ts).
+  //     If RM returns granular subtypes ("Rent Charge", "Tenant Payment", etc.),
+  //     widen the comparisons below.
+  //   - Ledger is pulled per currently-assigned tenant. Tenants who moved out
+  //     mid-period are NOT included. Fine for a weekly pulse, not for tight accounting.
+  //   - "Credit" entries are excluded from both billed and collected (treated as adjustments).
+  //   - Date filter is a lex compare on ISO strings — works for "YYYY-MM-DD" and full ISO.
+  //   - Payment amounts may be returned as negatives; Math.abs handles either sign.
+  async getCollectionsRate(
+    propertyId: number,
+    startDate: string,
+    endDate: string
+  ): Promise<{
+    PerTenant: Array<{
+      TenantID: number;
+      TenantName: string;
+      UnitName: string;
+      Billed: number;
+      Collected: number;
+      Rate: number;
+    }>;
+    TotalBilled: number;
+    TotalCollected: number;
+    Rate: number;
+  }> {
+    const tenants = await this.request<Tenant[]>(
+      "GET",
+      `/Tenants?filters=Unit.PropertyID,eq,${propertyId}&embeds=Unit,Property`
+    );
+
+    const perTenant = await Promise.all(
+      tenants.map(async (t) => {
+        const ledger = await this.getTenantLedger(t.TenantID);
+        const inRange = ledger.filter(
+          (item) => item.Date >= startDate && item.Date <= endDate
+        );
+        const billed = inRange
+          .filter((item) => item.Type === "Charge")
+          .reduce((sum, item) => sum + item.Amount, 0);
+        const collected = inRange
+          .filter((item) => item.Type === "Payment")
+          .reduce((sum, item) => sum + Math.abs(item.Amount), 0);
+        return {
+          TenantID: t.TenantID,
+          TenantName: `${t.FirstName} ${t.LastName}`,
+          UnitName: t.UnitName || "Unknown",
+          Billed: billed,
+          Collected: collected,
+          Rate: billed > 0 ? collected / billed : 0,
+        };
+      })
+    );
+
+    const withActivity = perTenant.filter((r) => r.Billed > 0 || r.Collected > 0);
+    withActivity.sort((a, b) => a.Rate - b.Rate);
+
+    const totalBilled = withActivity.reduce((s, r) => s + r.Billed, 0);
+    const totalCollected = withActivity.reduce((s, r) => s + r.Collected, 0);
+
+    return {
+      PerTenant: withActivity,
+      TotalBilled: totalBilled,
+      TotalCollected: totalCollected,
+      Rate: totalBilled > 0 ? totalCollected / totalBilled : 0,
+    };
+  }
+
   private async buildRentRollFromUnits(propertyId: number): Promise<RentRollEntry[]> {
     const units = await this.request<
       Array<{
