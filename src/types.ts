@@ -10,8 +10,10 @@ export interface Tenant {
   TenantID: number;
   FirstName: string;
   LastName: string;
+  Name?: string;
   Email: string;
   Phone: string;
+  Status?: string;
   MoveInDate: string;
   MoveOutDate: string | null;
   UnitID: number;
@@ -19,6 +21,8 @@ export interface Tenant {
   PropertyID: number;
   PropertyName: string;
   Balance: number;
+  LeaseStart?: string | null;
+  LeaseEnd?: string | null;
 }
 
 export interface Property {
@@ -41,6 +45,10 @@ export interface Unit {
   MarketRent: number;
   CurrentRent: number;
   Status: string;
+  MoveInDate?: string;
+  LeaseEnd?: string;
+  Balance?: number;
+  LastMoveOutDate?: string | null;
 }
 
 export interface ChargeItem {
@@ -76,12 +84,66 @@ export interface RentRollEntry {
   Status: string; // "Occupied" | "Vacant" | "Notice"
 }
 
+export interface VacantUnit {
+  UnitID: number;
+  UnitName: string;
+  PropertyName: string;
+  MarketRent: number;
+  LastMoveOutDate: string | null;
+  DaysVacant: number | null;
+}
+
+export interface ExpiringLease {
+  TenantID: number;
+  TenantName: string;
+  UnitName: string;
+  PropertyName: string;
+  LeaseEnd: string;
+  DaysUntilExpiration: number;
+  MonthlyRent: number | null;
+}
+
+export interface WorkOrder {
+  WorkOrderID: number;
+  Title: string;
+  Description: string;
+  Status: string;
+  Priority: string | null;
+  PropertyName: string | null;
+  UnitName: string | null;
+  TenantName: string | null;
+  CreatedDate: string | null;
+  ScheduledDate: string | null;
+  IsClosed: boolean;
+}
+
 export interface TenantNote {
   NoteID: number;
   TenantID: number;
   Date: string;
   Content: string;
   CreatedBy: string;
+}
+
+export interface PropertySummary {
+  PropertyID: number;
+  PropertyName: string;
+  TotalUnits: number;
+  OccupiedUnits: number;
+  VacantUnits: number;
+  OccupancyRate: number; // 0–100
+  ScheduledMonthlyRent: number;
+  DelinquentTenants: number;
+  DelinquentBalance: number;
+}
+
+/** Everything a dashboard render needs, gathered in one pass. */
+export interface PortfolioSnapshot {
+  generatedAt: string;
+  properties: PropertySummary[];
+  delinquencies: DelinquencyRecord[];
+  expiringLeases: ExpiringLease[];
+  vacantUnits: VacantUnit[];
 }
 
 export interface ApiError {

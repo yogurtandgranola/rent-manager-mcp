@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.env
+rent-dashboard-*.html
+*.log
+.DS_Store

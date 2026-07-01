@@ -1,7 +1,7 @@
 {
   "name": "rent-manager-mcp-server",
-  "version": "1.0.0",
-  "description": "MCP server for querying and updating Rent Manager Online via REST API",
+  "version": "1.1.0",
+  "description": "MCP server for querying and updating Rent Manager Online via REST API, with shareable HTML dashboards",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -10,7 +10,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "dashboard": "tsx src/generate-dashboard.ts",
+    "dashboard:demo": "tsx src/generate-dashboard.ts --demo"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
