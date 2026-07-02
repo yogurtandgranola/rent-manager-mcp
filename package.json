@@ -1,6 +1,6 @@
 {
   "name": "rent-manager-mcp-server",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "MCP server for querying and updating Rent Manager Online via REST API, with shareable HTML dashboards",
   "type": "module",
   "main": "dist/index.js",

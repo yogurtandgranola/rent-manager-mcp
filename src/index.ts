@@ -9,7 +9,14 @@ import { loadDotEnv } from "./env.js";
 import { RentManagerClient } from "./rent-manager-client.js";
 import { renderDashboardHTML } from "./dashboard.js";
 import { demoSnapshot } from "./demo-data.js";
-import type { RentManagerConfig, ApiError, Tenant } from "./types.js";
+import type {
+  RentManagerConfig,
+  ApiError,
+  Tenant,
+  LooseRecord,
+  ReportFormat,
+  ReportParamValue,
+} from "./types.js";
 
 // ── Configuration ──
 
@@ -62,6 +69,126 @@ function tenantLine(t: Tenant): string {
   return `${t.FirstName} ${t.LastName} — Unit ${t.UnitName} at ${t.PropertyName} (ID: ${t.TenantID})`;
 }
 
+function fmtMDY(d: Date): string {
+  return `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
+}
+
+function firstOfYear(): string {
+  return fmtMDY(new Date(new Date().getFullYear(), 0, 1));
+}
+
+function today(): string {
+  return fmtMDY(new Date());
+}
+
+function escapeCell(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "number") return Number.isInteger(v) ? v.toLocaleString("en-US") : v.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  if (typeof v === "object") return JSON.stringify(v).slice(0, 60);
+  return String(v).replace(/\|/g, "\\|").replace(/\r?\n/g, " ").slice(0, 120);
+}
+
+/** Render an array of loosely-shaped API records as a markdown table. */
+function renderRecords(records: LooseRecord[], preferredCols?: string[], maxRows = 100): string {
+  if (records.length === 0) return "_No rows returned._";
+
+  let cols: string[];
+  if (preferredCols) {
+    cols = preferredCols.filter((c) => records.some((r) => r[c] !== undefined && r[c] !== null));
+  } else {
+    // Collect scalar-valued keys in encounter order from a sample of rows
+    const seen = new Set<string>();
+    for (const r of records.slice(0, 25)) {
+      for (const [k, v] of Object.entries(r)) {
+        if (v !== null && typeof v === "object") continue;
+        seen.add(k);
+      }
+    }
+    cols = [...seen];
+  }
+  cols = cols.slice(0, 10);
+  if (cols.length === 0) cols = Object.keys(records[0]).slice(0, 6);
+
+  let out = `| ${cols.join(" | ")} |\n| ${cols.map(() => "---").join(" | ")} |\n`;
+  for (const r of records.slice(0, maxRows)) {
+    out += `| ${cols.map((c) => escapeCell(r[c])).join(" | ")} |\n`;
+  }
+  if (records.length > maxRows) {
+    out += `\n_Showing first ${maxRows} of ${records.length} rows._\n`;
+  }
+  return out;
+}
+
+/** Turn whatever RunReport returned (rows, file URL, or blob of JSON) into readable markdown. */
+function formatReportResult(result: unknown): string {
+  if (result === null || result === undefined) return "_Report ran but returned no data._";
+
+  if (typeof result === "string") {
+    if (/^https?:\/\//i.test(result.trim())) return `📄 Report file ready: ${result.trim()}`;
+    return result.length > 6000 ? result.slice(0, 6000) + "\n\n_…truncated_" : result;
+  }
+
+  if (Array.isArray(result)) {
+    return renderRecords(result as LooseRecord[]);
+  }
+
+  if (typeof result === "object") {
+    const obj = result as LooseRecord;
+    for (const key of ["ReportURL", "PDFUrl", "PdfUrl", "ExcelURL", "ExcelUrl", "FileURL", "FileUrl", "DownloadURL", "URL", "Url"]) {
+      const v = obj[key];
+      if (typeof v === "string" && v) return `📄 Report file ready: ${v}`;
+    }
+    for (const key of ["Data", "Rows", "Records", "Results", "Items", "ReportData"]) {
+      const v = obj[key];
+      if (Array.isArray(v) && v.length > 0) return renderRecords(v as LooseRecord[]);
+    }
+    const json = JSON.stringify(obj, null, 2);
+    return "```json\n" + (json.length > 6000 ? json.slice(0, 6000) + "\n…truncated" : json) + "\n```";
+  }
+
+  return String(result);
+}
+
+/** Resolve an optional property name to its ID, or return a user-facing error message. */
+async function resolvePropertyId(
+  property_name?: string
+): Promise<{ id?: number; name?: string; error?: string }> {
+  if (!property_name) return {};
+  const property = await client.findPropertyByName(property_name);
+  if (!property) {
+    return { error: `No property found matching "${property_name}". Use list_properties to see available names.` };
+  }
+  return { id: property.PropertyID, name: property.Name };
+}
+
+/**
+ * Run a financial report by trying a list of likely report names (RM instances
+ * name them slightly differently), with shared date/property parameter handling.
+ */
+async function runFinancialReport(opts: {
+  candidates: string[];
+  title: string;
+  parameters: Record<string, ReportParamValue>;
+  format?: ReportFormat;
+}) {
+  let lastErr: unknown = null;
+  for (const candidate of opts.candidates) {
+    try {
+      const { report, result } = await client.runReportByName(
+        candidate,
+        opts.parameters,
+        opts.format ?? "data"
+      );
+      let output = `## ${opts.title}\n_Report: ${report.Name} (ID ${report.ReportID})_\n\n`;
+      output += formatReportResult(result);
+      return ok(output);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  return fail(lastErr);
+}
+
 /** Resolve a tenant from either a name or property+unit, shared by several tools. */
 async function resolveTenants(input: {
   tenant_name?: string;
@@ -84,7 +211,7 @@ const client = new RentManagerClient(config);
 
 const server = new McpServer({
   name: "rent-manager",
-  version: "1.1.0",
+  version: "1.2.0",
 });
 
 // ── Tool: List Properties ──
@@ -629,6 +756,393 @@ server.tool(
       let output = `✅ Dashboard saved to **${outPath}**\n\n`;
       output += `Snapshot: ${snapshot.properties.length} properties · ${occupied}/${totalUnits} units occupied (${totalUnits ? ((occupied / totalUnits) * 100).toFixed(1) : 0}%) · ${formatCurrency(owed)} outstanding · ${snapshot.expiringLeases.length} leases expiring ≤ 90 days\n\n`;
       output += `The file is fully self-contained — attach it to an email or drop it in Slack and anyone can open it in a browser. It supports light/dark mode, hover tooltips, table views, and prints cleanly.`;
+      return ok(output);
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+// ══════════════════════════════════════════════════════════════════
+// Report engine — makes EVERY report in the Rent Manager instance
+// (built-in and custom) pullable through Claude.
+// ══════════════════════════════════════════════════════════════════
+
+// ── Tool: List Reports ──
+
+server.tool(
+  "list_reports",
+  "List every report available in this Rent Manager instance (built-in and custom) — P&L, balance sheet, owner statements, aged receivables, and everything else. Use this to discover what run_report can pull.",
+  {
+    search: z.string().optional().describe("Filter reports by name (e.g. 'profit', 'owner', 'aged')"),
+  },
+  async ({ search }) => {
+    try {
+      let reports = await client.getReports();
+      if (search) {
+        const lower = search.toLowerCase();
+        reports = reports.filter(
+          (r) =>
+            r.Name?.toLowerCase().includes(lower) ||
+            r.Description?.toLowerCase().includes(lower) ||
+            (r.ReportGroup ?? r.Group ?? r.Category ?? "").toLowerCase().includes(lower)
+        );
+      }
+      if (reports.length === 0) {
+        return ok(search ? `No reports matching "${search}".` : "No reports found.");
+      }
+
+      let output = `## Available Reports (${reports.length})${search ? ` — matching "${search}"` : ""}\n\n`;
+      output += `| ID | Report | Group | Description |\n|----|--------|-------|-------------|\n`;
+      for (const r of reports) {
+        output += `| ${r.ReportID} | ${r.Name} | ${r.ReportGroup ?? r.Group ?? r.Category ?? "—"} | ${(r.Description ?? "—").slice(0, 100)} |\n`;
+      }
+      output += `\nRun any of these with **run_report** (check parameters first with **get_report_info**).`;
+      return ok(output);
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+// ── Tool: Get Report Info ──
+
+server.tool(
+  "get_report_info",
+  "Show the parameters a Rent Manager report accepts (names, types, defaults) before running it with run_report. Accepts a report name or ID.",
+  {
+    report: z.string().describe("Report name (partial match OK, e.g. 'profit and loss') or numeric report ID"),
+  },
+  async ({ report }) => {
+    try {
+      const def = await client.findReport(report);
+      if (!def) {
+        return ok(`No report matching "${report}". Use list_reports to browse what's available.`);
+      }
+
+      const params = await client.getReportParameters(def.ReportID);
+
+      let output = `## ${def.Name} (ID ${def.ReportID})\n`;
+      if (def.Description) output += `${def.Description}\n`;
+      output += `\n### Parameters\n\n`;
+      if (params.length === 0) {
+        output += `No parameter metadata returned — common parameters are PropertyIDs, StartDate, EndDate, AsOfDate (dates as MM/DD/YYYY).\n`;
+      } else {
+        output += renderRecords(params);
+      }
+      output += `\nRun it with **run_report** — e.g. \`{"report": "${def.Name}", "parameters": {"PropertyIDs": [1,2], "StartDate": "01/01/${new Date().getFullYear()}", "EndDate": "${today()}"}}\``;
+      return ok(output);
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+// ── Tool: Run Report ──
+
+server.tool(
+  "run_report",
+  "Run ANY Rent Manager report by name or ID with arbitrary parameters — the universal escape hatch for reports without a dedicated tool. Dates use MM/DD/YYYY. Set format to 'pdf' or 'excel' to get a downloadable file link instead of data. If a run fails, check parameter names with get_report_info.",
+  {
+    report: z.string().describe("Report name (partial match OK) or numeric report ID"),
+    parameters: z
+      .record(
+        z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number()]))])
+      )
+      .optional()
+      .describe('Report parameters, e.g. {"PropertyIDs": [1,2], "StartDate": "01/01/2026", "EndDate": "06/30/2026"}. Arrays are serialized as multi-value parameters.'),
+    property_name: z.string().optional().describe("Convenience: resolves a property name to PropertyIDs for you"),
+    format: z.enum(["data", "pdf", "excel"]).optional().describe("'data' (default) returns rows inline; 'pdf'/'excel' return a file link"),
+  },
+  async ({ report, parameters, property_name, format }) => {
+    try {
+      const params: Record<string, ReportParamValue> = { ...(parameters ?? {}) };
+
+      const prop = await resolvePropertyId(property_name);
+      if (prop.error) return ok(prop.error);
+      if (prop.id && !params.PropertyIDs) params.PropertyIDs = [prop.id];
+
+      const { report: def, result } = await client.runReportByName(report, params, format ?? "data");
+
+      let output = `## ${def.Name}${prop.name ? ` — ${prop.name}` : ""}\n`;
+      if (Object.keys(params).length) {
+        output += `_Parameters: ${Object.entries(params).map(([k, v]) => `${k}=${Array.isArray(v) ? `(${v.join(",")})` : v}`).join(", ")}_\n`;
+      }
+      output += `\n${formatReportResult(result)}`;
+      return ok(output);
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+// ══════════════════════════════════════════════════════════════════
+// Financial statements — first-class wrappers over the report engine
+// ══════════════════════════════════════════════════════════════════
+
+// ── Tool: Profit & Loss ──
+
+server.tool(
+  "get_profit_and_loss",
+  "Pull a Profit & Loss (income statement) for the portfolio or one property over a date range. Defaults to year-to-date. Set format to 'pdf' or 'excel' for a downloadable file.",
+  {
+    property_name: z.string().optional().describe("Property to scope to. Omit for all properties."),
+    start_date: z.string().optional().describe("Start date MM/DD/YYYY (default: Jan 1 of this year)"),
+    end_date: z.string().optional().describe("End date MM/DD/YYYY (default: today)"),
+    format: z.enum(["data", "pdf", "excel"]).optional(),
+    extra_parameters: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe("Additional report parameters if your instance needs them (e.g. accounting basis)"),
+  },
+  async ({ property_name, start_date, end_date, format, extra_parameters }) => {
+    const prop = await resolvePropertyId(property_name);
+    if (prop.error) return ok(prop.error);
+
+    const parameters: Record<string, ReportParamValue> = {
+      StartDate: start_date ?? firstOfYear(),
+      EndDate: end_date ?? today(),
+      ...(extra_parameters ?? {}),
+    };
+    if (prop.id) parameters.PropertyIDs = [prop.id];
+
+    return runFinancialReport({
+      candidates: ["profit & loss", "profit and loss", "income statement", "profit"],
+      title: `Profit & Loss${prop.name ? ` — ${prop.name}` : ""} (${parameters.StartDate} to ${parameters.EndDate})`,
+      parameters,
+      format,
+    });
+  }
+);
+
+// ── Tool: Balance Sheet ──
+
+server.tool(
+  "get_balance_sheet",
+  "Pull a Balance Sheet as of a given date for the portfolio or one property. Set format to 'pdf' or 'excel' for a downloadable file.",
+  {
+    property_name: z.string().optional().describe("Property to scope to. Omit for all properties."),
+    as_of_date: z.string().optional().describe("As-of date MM/DD/YYYY (default: today)"),
+    format: z.enum(["data", "pdf", "excel"]).optional(),
+    extra_parameters: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  },
+  async ({ property_name, as_of_date, format, extra_parameters }) => {
+    const prop = await resolvePropertyId(property_name);
+    if (prop.error) return ok(prop.error);
+
+    const parameters: Record<string, ReportParamValue> = {
+      AsOfDate: as_of_date ?? today(),
+      ...(extra_parameters ?? {}),
+    };
+    if (prop.id) parameters.PropertyIDs = [prop.id];
+
+    return runFinancialReport({
+      candidates: ["balance sheet"],
+      title: `Balance Sheet${prop.name ? ` — ${prop.name}` : ""} (as of ${parameters.AsOfDate})`,
+      parameters,
+      format,
+    });
+  }
+);
+
+// ── Tool: Cash Flow ──
+
+server.tool(
+  "get_cash_flow",
+  "Pull a Cash Flow statement for the portfolio or one property over a date range. Defaults to year-to-date. Set format to 'pdf' or 'excel' for a downloadable file.",
+  {
+    property_name: z.string().optional().describe("Property to scope to. Omit for all properties."),
+    start_date: z.string().optional().describe("Start date MM/DD/YYYY (default: Jan 1 of this year)"),
+    end_date: z.string().optional().describe("End date MM/DD/YYYY (default: today)"),
+    format: z.enum(["data", "pdf", "excel"]).optional(),
+    extra_parameters: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  },
+  async ({ property_name, start_date, end_date, format, extra_parameters }) => {
+    const prop = await resolvePropertyId(property_name);
+    if (prop.error) return ok(prop.error);
+
+    const parameters: Record<string, ReportParamValue> = {
+      StartDate: start_date ?? firstOfYear(),
+      EndDate: end_date ?? today(),
+      ...(extra_parameters ?? {}),
+    };
+    if (prop.id) parameters.PropertyIDs = [prop.id];
+
+    return runFinancialReport({
+      candidates: ["cash flow", "statement of cash flows"],
+      title: `Cash Flow${prop.name ? ` — ${prop.name}` : ""} (${parameters.StartDate} to ${parameters.EndDate})`,
+      parameters,
+      format,
+    });
+  }
+);
+
+// ── Tool: Owner Statement ──
+
+server.tool(
+  "get_owner_statement",
+  "Pull an owner statement (distributions/activity) for an owner over a date range. Defaults to year-to-date. Set format to 'pdf' for the send-ready file.",
+  {
+    owner_name: z.string().optional().describe("Owner name to scope the statement to (partial match OK)"),
+    property_name: z.string().optional().describe("Property to scope to instead of / in addition to owner"),
+    start_date: z.string().optional().describe("Start date MM/DD/YYYY (default: Jan 1 of this year)"),
+    end_date: z.string().optional().describe("End date MM/DD/YYYY (default: today)"),
+    format: z.enum(["data", "pdf", "excel"]).optional(),
+    extra_parameters: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  },
+  async ({ owner_name, property_name, start_date, end_date, format, extra_parameters }) => {
+    try {
+      const prop = await resolvePropertyId(property_name);
+      if (prop.error) return ok(prop.error);
+
+      const parameters: Record<string, ReportParamValue> = {
+        StartDate: start_date ?? firstOfYear(),
+        EndDate: end_date ?? today(),
+        ...(extra_parameters ?? {}),
+      };
+      if (prop.id) parameters.PropertyIDs = [prop.id];
+
+      let ownerLabel = "";
+      if (owner_name) {
+        const owners = await client.getOwners();
+        const lower = owner_name.toLowerCase();
+        const matches = owners.filter((o) =>
+          String(o.Name ?? o.DisplayName ?? `${o.FirstName ?? ""} ${o.LastName ?? ""}`).toLowerCase().includes(lower)
+        );
+        if (matches.length === 0) {
+          return ok(`No owner found matching "${owner_name}". Use list_owners to see available owners.`);
+        }
+        if (matches.length > 1) {
+          const names = matches.map((o) => `- ${o.Name ?? o.DisplayName ?? `${o.FirstName ?? ""} ${o.LastName ?? ""}`}`).join("\n");
+          return ok(`Found ${matches.length} owners matching "${owner_name}" — be more specific:\n\n${names}`);
+        }
+        const ownerId = matches[0].OwnerID as number;
+        parameters.OwnerIDs = [ownerId];
+        ownerLabel = ` — ${matches[0].Name ?? matches[0].DisplayName ?? owner_name}`;
+      }
+
+      return runFinancialReport({
+        candidates: ["owner statement", "owner"],
+        title: `Owner Statement${ownerLabel}${prop.name ? ` — ${prop.name}` : ""} (${parameters.StartDate} to ${parameters.EndDate})`,
+        parameters,
+        format,
+      });
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+// ── Tool: Chart of Accounts ──
+
+server.tool(
+  "get_chart_of_accounts",
+  "List the general-ledger chart of accounts (account numbers, names, types). Useful before drilling into financials.",
+  {},
+  async () => {
+    try {
+      const accounts = await client.getGLAccounts();
+      if (accounts.length === 0) return ok("No GL accounts found.");
+
+      let output = `## Chart of Accounts (${accounts.length})\n\n`;
+      output += `| # | Account | Type | Description |\n|---|---------|------|-------------|\n`;
+      for (const a of accounts) {
+        output += `| ${a.AccountNumber ?? a.Number ?? a.GLAccountID} | ${a.Name} | ${a.GLAccountType ?? a.Type ?? "—"} | ${(a.Description ?? "—").slice(0, 80)} |\n`;
+      }
+      return ok(output);
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+// ══════════════════════════════════════════════════════════════════
+// Owners, vendors, payables, prospects — the rest of the platform
+// ══════════════════════════════════════════════════════════════════
+
+// ── Tool: List Owners ──
+
+server.tool(
+  "list_owners",
+  "List property owners with contact info and the properties they own.",
+  {},
+  async () => {
+    try {
+      const owners = await client.getOwners();
+      if (owners.length === 0) return ok("No owners found.");
+      let output = `## Owners (${owners.length})\n\n`;
+      output += renderRecords(owners, ["OwnerID", "Name", "DisplayName", "FirstName", "LastName", "Email", "Phone", "IsActive"]);
+      return ok(output);
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+// ── Tool: List Vendors ──
+
+server.tool(
+  "list_vendors",
+  "List vendors/suppliers with contact info — useful when creating work orders or reviewing payables.",
+  {},
+  async () => {
+    try {
+      const vendors = await client.getVendors();
+      if (vendors.length === 0) return ok("No vendors found.");
+      let output = `## Vendors (${vendors.length})\n\n`;
+      output += renderRecords(vendors, ["VendorID", "Name", "DisplayName", "Email", "Phone", "IsActive"]);
+      return ok(output);
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+// ── Tool: Get Bills ──
+
+server.tool(
+  "get_bills",
+  "Pull accounts-payable bills, unpaid ones by default. Optionally filter to one property or include paid bills.",
+  {
+    property_name: z.string().optional().describe("Property to filter by. Omit for all properties."),
+    include_paid: z.boolean().optional().describe("Include fully paid bills (default false)"),
+  },
+  async ({ property_name, include_paid }) => {
+    try {
+      const prop = await resolvePropertyId(property_name);
+      if (prop.error) return ok(prop.error);
+
+      const bills = await client.getBills(!(include_paid ?? false), prop.id);
+      if (bills.length === 0) {
+        return ok(`No ${include_paid ? "" : "unpaid "}bills found${prop.name ? ` at ${prop.name}` : ""}.`);
+      }
+
+      let output = `## Bills${prop.name ? ` — ${prop.name}` : ""} (${bills.length})\n\n`;
+      output += renderRecords(bills, ["BillID", "VendorName", "Reference", "Memo", "Amount", "BillDate", "DueDate", "IsFullyAllocated"]);
+      return ok(output);
+    } catch (err) {
+      return fail(err);
+    }
+  }
+);
+
+// ── Tool: Get Prospects ──
+
+server.tool(
+  "get_prospects",
+  "Pull leasing prospects/leads, optionally filtered to one property — useful for tracking the leasing pipeline alongside the vacancy report.",
+  {
+    property_name: z.string().optional().describe("Property to filter by. Omit for all properties."),
+  },
+  async ({ property_name }) => {
+    try {
+      const prop = await resolvePropertyId(property_name);
+      if (prop.error) return ok(prop.error);
+
+      const prospects = await client.getProspects(prop.id);
+      if (prospects.length === 0) {
+        return ok(`No prospects found${prop.name ? ` at ${prop.name}` : ""}.`);
+      }
+
+      let output = `## Prospects${prop.name ? ` — ${prop.name}` : ""} (${prospects.length})\n\n`;
+      output += renderRecords(prospects, ["ProspectID", "FirstName", "LastName", "Name", "Email", "Phone", "Status", "PropertyName", "UnitName"]);
       return ok(output);
     } catch (err) {
       return fail(err);

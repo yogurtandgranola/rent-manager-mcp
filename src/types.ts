@@ -146,6 +146,39 @@ export interface PortfolioSnapshot {
   vacantUnits: VacantUnit[];
 }
 
+// ── Reports engine ──
+
+export interface ReportDefinition {
+  ReportID: number;
+  Name: string;
+  Description?: string;
+  ReportGroup?: string;
+  Group?: string;
+  Category?: string;
+}
+
+/** Report parameter metadata varies by RM version — keep it loose. */
+export type ReportParameterDef = Record<string, unknown>;
+
+export type ReportFormat = "data" | "pdf" | "excel";
+
+export type ReportParamValue = string | number | boolean | Array<string | number>;
+
+// ── Financials & other entities (loosely typed — RM field names vary) ──
+
+export interface GLAccount {
+  GLAccountID: number;
+  Name: string;
+  AccountNumber?: string;
+  Number?: string;
+  GLAccountType?: string;
+  Type?: string;
+  Description?: string;
+  IsActive?: boolean;
+}
+
+export type LooseRecord = Record<string, unknown>;
+
 export interface ApiError {
   status: number;
   message: string;

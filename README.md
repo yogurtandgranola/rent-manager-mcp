@@ -1,10 +1,10 @@
 # Rent Manager MCP Server
 
-A local [Model Context Protocol](https://modelcontextprotocol.io/) server that connects Claude to **Rent Manager Online (RMO)** via their REST API. Query and update Rent Manager data conversationally through Claude — and generate self-contained HTML dashboards you can share with your whole team.
+A local [Model Context Protocol](https://modelcontextprotocol.io/) server that turns Claude into a full-featured front end for **Rent Manager Online (RMO)**: operations data, tenants, work orders, financial statements, **every report in your RM instance**, and shareable HTML dashboards.
 
-## Tools Included
+## Tools Included (25)
 
-### Read / reporting
+### Operations / read
 
 | Tool | Description |
 |------|-------------|
@@ -18,6 +18,28 @@ A local [Model Context Protocol](https://modelcontextprotocol.io/) server that c
 | `get_tenant_ledger` | Tenant ledger / payment history by name or unit |
 | `get_tenant_balance` | Quick balance check without pulling the full ledger |
 | `get_work_orders` | Open (or all) maintenance work orders by property |
+| `get_prospects` | Leasing prospects/leads, per property or portfolio-wide |
+
+### Reports engine — pull ANY Rent Manager report
+
+| Tool | Description |
+|------|-------------|
+| `list_reports` | Every report available in your RM instance (built-in **and** custom) |
+| `get_report_info` | The parameters a report accepts, before you run it |
+| `run_report` | Run any report by name/ID with arbitrary parameters — inline data, PDF, or Excel |
+
+### Financial statements
+
+| Tool | Description |
+|------|-------------|
+| `get_profit_and_loss` | P&L / income statement per property or portfolio, any date range |
+| `get_balance_sheet` | Balance sheet as of any date |
+| `get_cash_flow` | Cash-flow statement, any date range |
+| `get_owner_statement` | Owner statement by owner and/or property (PDF-ready) |
+| `get_chart_of_accounts` | GL chart of accounts |
+| `list_owners` | Property owners with contact info |
+| `list_vendors` | Vendors/suppliers |
+| `get_bills` | Accounts-payable bills (unpaid by default) |
 
 ### Write
 
@@ -113,6 +135,23 @@ Once connected, you can ask Claude things like:
 - "Add a note to the tenant in unit 204 at Maple Ridge: Called about maintenance request"
 - "Create a work order for unit 12B at Maple Ridge: garbage disposal jammed"
 - "Generate a dashboard I can send to the team"
+- "Pull the P&L for Oak Park for Q2 and compare it to the portfolio"
+- "Get me the balance sheet as of June 30"
+- "What reports are available for receivables?" → then "Run the aged receivables report"
+- "Pull the owner statement for the Hendersons year-to-date as a PDF"
+- "Which bills are unpaid right now?"
+
+## Pulling P&Ls and every other report
+
+Rent Manager exposes **every report in your instance** — built-in and custom — through its report API, and this server surfaces all of them:
+
+1. **`list_reports`** shows the whole catalog (filter with `search: "profit"`, `"owner"`, `"aged"`, …).
+2. **`get_report_info`** shows the exact parameters a report accepts.
+3. **`run_report`** runs it — inline data tables by default, or `format: "pdf"` / `"excel"` for a downloadable, send-ready file.
+
+The common financial statements (P&L, balance sheet, cash flow, owner statements) also have first-class tools with sensible defaults (year-to-date, whole portfolio) so you can just ask for them by name. All date parameters use `MM/DD/YYYY`.
+
+> **Note:** report names and parameter names vary slightly between Rent Manager versions and configurations. The financial tools try the common name variants automatically, and every tool falls back gracefully — if a run fails, `get_report_info` shows the exact parameters your instance expects, and `extra_parameters` lets you pass anything instance-specific (e.g. accounting basis).
 
 ## Team Dashboards
 
@@ -158,7 +197,7 @@ npm run dev
 ## Ideas for Next Steps
 
 1. **`record_payment`** — Record a payment against a tenant's balance (with confirmation safeguards)
-2. **`get_owner_statement`** — Pull owner distribution/statement data for a property
-3. **`get_lease_details`** — Full lease terms, renewal options, and rent escalation schedules
-4. **Trend history** — persist each dashboard snapshot and chart occupancy/delinquency over time
-5. **Email delivery** — pipe the generated dashboard into a scheduled email to the team
+2. **`get_lease_details`** — Full lease terms, renewal options, and rent escalation schedules
+3. **Trend history** — persist each dashboard snapshot and chart occupancy/delinquency over time
+4. **Email delivery** — pipe the generated dashboard into a scheduled email to the team
+5. **Financial dashboard** — fold P&L trends into the shareable HTML dashboard

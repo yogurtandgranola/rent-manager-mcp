@@ -13,6 +13,12 @@ import type {
   PortfolioSnapshot,
   ApiError,
   Unit,
+  ReportDefinition,
+  ReportParameterDef,
+  ReportFormat,
+  ReportParamValue,
+  GLAccount,
+  LooseRecord,
 } from "./types.js";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -42,6 +48,7 @@ export class RentManagerClient {
   private config: RentManagerConfig;
   private authToken: string | null = null;
   private propertyCache: { data: Property[]; fetchedAt: number } | null = null;
+  private reportCache: { data: ReportDefinition[]; fetchedAt: number } | null = null;
 
   constructor(config: RentManagerConfig) {
     this.config = config;
@@ -521,5 +528,136 @@ export class RentManagerClient {
       expiringLeases,
       vacantUnits,
     };
+  }
+
+  // ── Report engine ──
+  //
+  // Rent Manager exposes every report in the instance (built-in AND custom)
+  // through /Reports + /Reports/{id}/RunReport, so these three methods make
+  // the whole report catalog reachable.
+
+  async getReports(): Promise<ReportDefinition[]> {
+    const now = Date.now();
+    if (this.reportCache && now - this.reportCache.fetchedAt < PROPERTY_CACHE_TTL_MS) {
+      return this.reportCache.data;
+    }
+    const data = await this.requestAllPages<ReportDefinition>("/Reports");
+    this.reportCache = { data, fetchedAt: now };
+    return data;
+  }
+
+  async findReport(nameOrId: string): Promise<ReportDefinition | null> {
+    const reports = await this.getReports();
+
+    if (/^\d+$/.test(nameOrId.trim())) {
+      const id = Number(nameOrId.trim());
+      const byId = reports.find((r) => r.ReportID === id);
+      if (byId) return byId;
+    }
+
+    const lower = nameOrId.toLowerCase();
+    return (
+      reports.find((r) => r.Name?.toLowerCase() === lower) ??
+      reports.find((r) => r.Name?.toLowerCase().includes(lower)) ??
+      null
+    );
+  }
+
+  async getReportParameters(reportId: number): Promise<ReportParameterDef[]> {
+    try {
+      return await this.request<ReportParameterDef[]>(
+        "GET",
+        `/Reports/${reportId}/ReportParameters`
+      );
+    } catch {
+      // Older API versions expose parameters as an embed instead
+      const report = await this.request<LooseRecord>(
+        "GET",
+        `/Reports/${reportId}?embeds=ReportParameters`
+      );
+      const embedded = report.ReportParameters;
+      return Array.isArray(embedded) ? (embedded as ReportParameterDef[]) : [];
+    }
+  }
+
+  /**
+   * Run any report. Parameters are serialized the way RunReport expects:
+   * `Name,Value;Name2,Value2` with multi-value params in parentheses, e.g.
+   * `PropertyIDs,(1,2,3);StartDate,01/01/2026;EndDate,06/30/2026`.
+   */
+  async runReport(
+    reportId: number,
+    parameters: Record<string, ReportParamValue>,
+    format: ReportFormat = "data"
+  ): Promise<unknown> {
+    const serialized = Object.entries(parameters)
+      .map(([key, value]) => {
+        const v = Array.isArray(value) ? `(${value.join(",")})` : String(value);
+        return `${key},${v}`;
+      })
+      .join(";");
+
+    const params = new URLSearchParams();
+    if (serialized) params.set("parameters", serialized);
+    if (format === "pdf") params.set("GetOptions", "ReturnPDFUrl");
+    if (format === "excel") params.set("GetOptions", "ReturnExcelUrl");
+
+    const query = params.toString();
+    return this.request<unknown>(
+      "GET",
+      `/Reports/${reportId}/RunReport${query ? `?${query}` : ""}`
+    );
+  }
+
+  /** Find a report by name and run it — the engine behind the P&L/balance-sheet/cash-flow tools. */
+  async runReportByName(
+    reportName: string,
+    parameters: Record<string, ReportParamValue>,
+    format: ReportFormat = "data"
+  ): Promise<{ report: ReportDefinition; result: unknown }> {
+    const report = await this.findReport(reportName);
+    if (!report) {
+      const available = (await this.getReports())
+        .map((r) => r.Name)
+        .filter(Boolean)
+        .slice(0, 40)
+        .join(", ");
+      throw this.buildError(
+        404,
+        `No report matching "${reportName}" found in this Rent Manager instance. Available reports include: ${available}`,
+        "/Reports"
+      );
+    }
+    const result = await this.runReport(report.ReportID, parameters, format);
+    return { report, result };
+  }
+
+  // ── Financials ──
+
+  async getGLAccounts(): Promise<GLAccount[]> {
+    return this.requestAllPages<GLAccount>("/GLAccounts");
+  }
+
+  // ── Owners, vendors, payables, prospects ──
+
+  async getOwners(): Promise<LooseRecord[]> {
+    return this.requestAllPages<LooseRecord>("/Owners?embeds=Properties");
+  }
+
+  async getVendors(): Promise<LooseRecord[]> {
+    return this.requestAllPages<LooseRecord>("/Vendors");
+  }
+
+  async getBills(unpaidOnly: boolean, propertyId?: number): Promise<LooseRecord[]> {
+    const filters: string[] = [];
+    if (unpaidOnly) filters.push("IsFullyAllocated,eq,false");
+    if (propertyId) filters.push(`PropertyID,eq,${propertyId}`);
+    const filterParam = filters.length ? `filters=${filters.join(";")}&` : "";
+    return this.requestAllPages<LooseRecord>(`/Bills?${filterParam}embeds=Vendor`);
+  }
+
+  async getProspects(propertyId?: number): Promise<LooseRecord[]> {
+    const filterParam = propertyId ? `filters=PropertyID,eq,${propertyId}&` : "";
+    return this.requestAllPages<LooseRecord>(`/Prospects?${filterParam}embeds=Unit,Property`);
   }
 }
