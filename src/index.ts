@@ -3,12 +3,49 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { RentManagerClient } from "./rent-manager-client.js";
 import type { RentManagerConfig, ApiError } from "./types.js";
 
 // ── Configuration ──
 
+// Minimal .env loader (no dependency) so the documented ".env in the project
+// root" setup actually works. Values already present in the environment win.
+function loadDotEnv(): void {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    resolve(process.cwd(), ".env"),
+    resolve(here, "..", ".env"), // project root when running from dist/ or src/
+  ];
+  for (const file of candidates) {
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split(/\r?\n/)) {
+      const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+      if (!match || line.trimStart().startsWith("#")) continue;
+      let value = match[2];
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      if (!(match[1] in process.env)) {
+        process.env[match[1]] = value;
+      }
+    }
+    break; // first .env found wins
+  }
+}
+
 function loadConfig(): RentManagerConfig {
+  loadDotEnv();
   const baseUrl = process.env.RM_API_BASE_URL;
   if (!baseUrl) {
     console.error(
