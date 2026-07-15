@@ -29,7 +29,8 @@ Edit `.env` and fill in your Rent Manager credentials:
 
 ```env
 # Your Rent Manager API base URL
-RM_API_BASE_URL=https://yourcompany.rentmanager.com/api
+# Rent Manager Online API URLs follow https://{yourcorp}.api.rentmanager.com
+RM_API_BASE_URL=https://yourcompany.api.rentmanager.com
 
 # Option A: API Token (preferred)
 RM_API_TOKEN=your-api-token-here
@@ -62,7 +63,7 @@ Add this to your `claude_desktop_config.json`:
       "command": "node",
       "args": ["/absolute/path/to/rent-manager-mcp-server/dist/index.js"],
       "env": {
-        "RM_API_BASE_URL": "https://yourcompany.rentmanager.com/api",
+        "RM_API_BASE_URL": "https://yourcompany.api.rentmanager.com",
         "RM_API_TOKEN": "your-api-token-here",
         "RM_LOCATION_ID": "1"
       }
