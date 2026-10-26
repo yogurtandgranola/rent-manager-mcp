@@ -1,0 +1,37 @@
+# Render Blueprint: New > Blueprint in the Render dashboard, then pick this repo.
+# Values marked "sync: false" are asked for during setup. See docs/TEAM_SETUP.md.
+services:
+  - type: web
+    name: rent-manager-mcp
+    runtime: node
+    # The free plan sleeps when idle, and Claude gives up waiting for it to wake.
+    plan: starter
+    region: ohio
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/index.js --http
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Encrypts sign-in tokens. Render generates it; changing it signs everyone out.
+      - key: AUTH_SECRET
+        generateValue: true
+      # Rent Manager API user
+      - key: RM_CORP_ID
+        sync: false
+      - key: RM_USERNAME
+        sync: false
+      - key: RM_PASSWORD
+        sync: false
+      - key: RM_LOCATION_ID
+        value: "1"
+      # Google sign-in (Google Cloud Console > OAuth client)
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      # Who can sign in, and who can write
+      - key: ALLOWED_DOMAINS
+        sync: false
+      - key: EDITOR_EMAILS
+        sync: false
