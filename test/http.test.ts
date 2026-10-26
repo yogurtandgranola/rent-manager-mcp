@@ -264,7 +264,7 @@ test("hosted config fails closed", () => {
   const env = {
     PUBLIC_URL: "https://rm.example.com",
     AUTH_SECRET: "s".repeat(40),
-    GOOGLE_CLIENT_ID: "id",
+    GOOGLE_CLIENT_ID: "573300019340-abc123def456.apps.googleusercontent.com",
     GOOGLE_CLIENT_SECRET: "secret",
     ALLOWED_DOMAINS: "@CornellCommunities.com",
     EDITOR_EMAILS: "Owner@cornellcommunities.com, second@cornellcommunities.com",
@@ -276,6 +276,16 @@ test("hosted config fails closed", () => {
   assert.throws(() => loadAuthConfig({ ...env, AUTH_SECRET: "short" }), /32 characters/);
   assert.throws(() => loadAuthConfig({ ...env, PUBLIC_URL: "http://rm.example.com" }), /https/);
   assert.equal(loadAuthConfig({ ...env, PUBLIC_URL: "", RENDER_EXTERNAL_URL: "https://x.onrender.com" }).publicUrl.host, "x.onrender.com");
+
+  // Line breaks and spaces picked up while pasting are removed...
+  const pasted = loadAuthConfig({ ...env, GOOGLE_CLIENT_ID: " 573300019340-abc123\ndef456.ap\nps.googleusercontent.com ", GOOGLE_CLIENT_SECRET: "GOCSPX-ab c\n" });
+  assert.equal(pasted.googleClientId, "573300019340-abc123def456.apps.googleusercontent.com");
+  assert.equal(pasted.googleClientSecret, "GOCSPX-abc");
+  // ...but anything else that can't be a client ID stops startup with a clear message.
+  assert.throws(
+    () => loadAuthConfig({ ...env, GOOGLE_CLIENT_ID: "573300019340-+l\nn7g\u00f3n3fbn533.ap\nps.googleusercontent.com" }),
+    /doesn't look like a Google OAuth client ID/
+  );
 });
 
 async function registerConfidential(): Promise<{ client_id: string; client_secret: string }> {

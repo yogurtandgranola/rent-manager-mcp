@@ -60,6 +60,23 @@ function required(name: string, env: NodeJS.ProcessEnv): string {
   return value;
 }
 
+/**
+ * Google credentials pasted into a hosting dashboard often pick up line
+ * breaks or spaces, and Google then answers "OAuth client was not found"
+ * with no hint why. Whitespace is never valid in either value, so strip it,
+ * then check the client ID's shape so a mangled value fails at startup.
+ */
+function googleCredential(name: string, env: NodeJS.ProcessEnv): string {
+  const value = required(name, env).replace(/\s+/g, "");
+  if (name === "GOOGLE_CLIENT_ID" && !/^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(value)) {
+    throw new Error(
+      `GOOGLE_CLIENT_ID doesn't look like a Google OAuth client ID (got "${value}"). ` +
+        "Copy it again with the copy button in Google Cloud > Google Auth Platform > Clients; it should look like 1234567890-abc123.apps.googleusercontent.com."
+    );
+  }
+  return value;
+}
+
 /** Settings for the hosted server's Google sign-in. Fails closed: someone must be allowed in. */
 export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig {
   // Render sets RENDER_EXTERNAL_URL automatically.
@@ -81,8 +98,8 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
   return {
     publicUrl,
     secret,
-    googleClientId: required("GOOGLE_CLIENT_ID", env),
-    googleClientSecret: required("GOOGLE_CLIENT_SECRET", env),
+    googleClientId: googleCredential("GOOGLE_CLIENT_ID", env),
+    googleClientSecret: googleCredential("GOOGLE_CLIENT_SECRET", env),
     allowedDomains,
     allowedEmails,
     editorEmails,

@@ -105,6 +105,7 @@ All changes happen in Render: open the service, click **Environment**, edit, the
 
 | What you see | Likely cause |
 |---|---|
+| Google says "invalid_client" or "The OAuth client was not found" | `GOOGLE_CLIENT_ID` in Render is garbled (often extra line breaks from copying). Copy it again with Google's copy button and paste it into an emptied box |
 | Google says "redirect_uri_mismatch" | Part 3's address doesn't exactly match your Render address plus `/oauth/google/callback` |
 | "...is not allowed to use this connector" | The person signed in with a personal Google account, or `ALLOWED_DOMAINS` is misspelled |
 | Google says "access blocked: app is restricted to users within its organization" | Same: they used an account outside your Workspace |
