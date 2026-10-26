@@ -105,8 +105,8 @@ Ask Claude to "test the Rent Manager connection". You should see your API host, 
 Rent Manager instances vary by version and configuration. These points were built from Rent Manager's public SDKs but should be confirmed once against your account:
 
 1. **Tenant notes.** Run `add_tenant_note` once on a test tenant and confirm it appears on the tenant's History tab. The server posts to `/Tenants/{id}/History` and, only if that route doesn't exist, to `/Tenants/HistoryNotes`. If Rent Manager says a category is required, look up IDs with `rm_api_get` on `HistoryCategories` and set `RM_NOTE_CATEGORY_ID`.
-2. **Rent amounts.** The rent roll counts a recurring charge as rent when its charge type name contains "rent" (e.g. "Lot Rent", "Home Rent"). Everything else (utilities, fees) shows as other recurring. Compare one property against Rent Manager's own rent roll report.
-3. **Aging.** Rent Manager allocates each payment to specific charges; this server estimates aging by applying payments to the oldest charges first. Totals match the tenant's balance, but bucket splits can differ slightly from Rent Manager's aging report.
+2. **Rent amounts.** The rent roll counts a recurring charge as rent when its charge type description contains "rent" (e.g. "Lot Rent", "Park Owned Home Monthly Rent"). Everything else (utilities, fees) shows as other recurring. Compare one property against Rent Manager's own rent roll report.
+3. **Balances and aging.** Balances are read from Rent Manager's open charges and unapplied payments, using its own payment allocations, as of today. Charges Rent Manager posts ahead of their due date (next month's rent) aren't counted until they're due, so totals can be lower than a Rent Manager report that includes them. If an instance doesn't expose open charges, the server falls back to each tenant's ledger and estimates aging oldest-first.
 
 If a tool reports a missing field or an API error, `rm_api_get` shows exactly what your instance returns, e.g. path `Tenants`, pagesize `1`.
 

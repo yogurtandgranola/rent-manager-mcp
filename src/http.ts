@@ -63,7 +63,13 @@ export function createHttpApp(service: RentManagerService, provider: GoogleOAuth
   });
 
   app.get("/health", (_req, res) => {
-    res.json({ ok: true, version });
+    // Shows the exact URLs to paste into Claude and Google, so nobody copies an example address.
+    res.json({
+      ok: true,
+      version,
+      connectorUrl: mcpUrl.href,
+      googleRedirectUri: provider.googleRedirectUri,
+    });
   });
 
   app.use(

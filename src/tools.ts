@@ -4,11 +4,13 @@ import { RentManagerError } from "./rent-manager-client.js";
 import { csv, day, money, pct, table, truncate } from "./format.js";
 import {
   buildLedger,
-  computeAging,
+  isCurrentTenant,
   RentManagerService,
   tenantName,
+  tenantStatus,
   unitLabel,
   UserFacingError,
+  type Balance,
 } from "./services.js";
 import type { RentRollRow, Tenant } from "./types.js";
 
@@ -33,6 +35,12 @@ export function formatError(err: unknown): string {
   }
   if (err instanceof Error) return `Error: ${err.message}`;
   return `Unexpected error: ${String(err)}`;
+}
+
+function agingNote(exact: boolean): string {
+  return exact
+    ? "\n_Balances and aging come from Rent Manager's own payment allocations, as of today. Charges posted ahead of their due date aren't counted._\n"
+    : "\n_Aging is estimated by applying payments to the oldest charges first._\n";
 }
 
 async function run(fn: () => Promise<string>): Promise<ToolResult> {
@@ -74,11 +82,14 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
       unitName: args.unit_name,
     });
 
-  const tenantHeader = async (t: Tenant) => {
-    const label = (await svc.labelTenants([t])).get(t.TenantID);
+  const tenantHeader = async (t: Tenant, balance?: Balance) => {
+    const [label, owed] = await Promise.all([
+      svc.labelTenants([t]).then((m) => m.get(t.TenantID)),
+      balance ? Promise.resolve(balance) : svc.getTenantBalance(t).then((r) => r.balance),
+    ]);
     return (
       `**Tenant ID:** ${t.TenantID} | **Unit:** ${label?.unitName ?? "-"} | **Property:** ${label?.propertyName ?? "-"} | ` +
-      `**Status:** ${t.IsActive === false ? "Past" : "Current"} | **Balance:** ${money(t.CurrentBalance)}\n`
+      `**Status:** ${tenantStatus(t)} | **Balance due today:** ${money(owed.balance)}\n`
     );
   };
 
@@ -154,20 +165,19 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
         const tenants = await svc.searchTenants(query, { propertyId: property?.PropertyID, activeOnly: active_only });
         if (!tenants.length) return `No tenants match "${query}"${property ? ` at ${property.Name}` : ""}.`;
         const shown = tenants.slice(0, limit);
-        const labels = await svc.labelTenants(shown);
+        const [labels, { balances }] = await Promise.all([svc.labelTenants(shown), svc.balancesFor(shown, {})]);
         return (
           `## Tenants matching "${query}"${property ? ` at ${property.Name}` : ""}\n\n` +
           `Showing ${shown.length} of ${tenants.length}.\n\n` +
           table(
-            ["Name", "Tenant ID", "Unit", "Property", "Status", "Balance", "Email"],
+            ["Name", "Tenant ID", "Unit", "Property", "Status", "Balance Due"],
             shown.map((t) => [
               tenantName(t),
               t.TenantID,
               labels.get(t.TenantID)?.unitName,
               labels.get(t.TenantID)?.propertyName,
-              t.IsActive === false ? "Past" : "Current",
-              money(t.CurrentBalance),
-              t.Email,
+              tenantStatus(t),
+              money(balances.get(t.TenantID)?.balance),
             ])
           )
         );
@@ -181,15 +191,15 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
     {
       title: "Get tenant balance",
       description:
-        "Quick balance check for one tenant: current balance, estimated aging buckets, and last payment. Identify the tenant by tenant_id, tenant_name, or property_name + unit_name.",
+        "Quick balance check for one tenant: balance due today, 0-30/31-60/61-90/90+ aging, and last payment. Identify the tenant by tenant_id, tenant_name, or property_name + unit_name.",
       inputSchema: { ...tenantSelector },
       annotations: READ_ONLY,
     },
     (args) =>
       run(async () => {
         const tenant = await resolveTenant(args);
-        let out = `## Balance for ${tenantName(tenant)}\n\n${await tenantHeader(tenant)}\n`;
-        const aging = computeAging(await svc.getTransactions(tenant.TenantID), svc.today());
+        const { balance: aging, exact } = await svc.getTenantBalance(tenant);
+        let out = `## Balance for ${tenantName(tenant)}\n\n${await tenantHeader(tenant, aging)}\n`;
         out += table(
           ["0-30 days", "31-60", "61-90", "90+", "Oldest unpaid charge", "Last payment"],
           [
@@ -203,7 +213,7 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
             ],
           ]
         );
-        out += "\n_Aging is estimated by applying payments to the oldest charges first._\n";
+        out += agingNote(exact);
         return out;
       })
   );
@@ -225,24 +235,31 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
     ({ from_date, to_date, limit, ...selector }) =>
       run(async () => {
         const tenant = await resolveTenant(selector);
-        const [txs, chargeNames] = await Promise.all([svc.getTransactions(tenant.TenantID), svc.chargeTypeNames()]);
-        let out = `## Ledger for ${tenantName(tenant)}\n\n${await tenantHeader(tenant)}\n`;
+        const [txs, chargeNames, { balance, exact }] = await Promise.all([
+          svc.getTransactions(tenant.TenantID),
+          svc.chargeTypeNames(),
+          svc.getTenantBalance(tenant),
+        ]);
+        let out = `## Ledger for ${tenantName(tenant)}\n\n${await tenantHeader(tenant, balance)}\n`;
         if (!txs.length) return out + "No transactions on file.\n";
 
         const ledger = buildLedger(txs);
         const inRange = ledger.filter((r) => (!from_date || (r.date ?? "") >= from_date) && (!to_date || (r.date ?? "") <= to_date));
         const shown = inRange.slice(-limit);
         out += `Showing ${shown.length} of ${inRange.length} transactions${from_date || to_date ? ` between ${from_date ?? "start"} and ${to_date ?? "today"}` : ""}.\n\n`;
+        const today = svc.today();
         out += table(
           ["Date", "Type", "Description", "Charge", "Payment/Credit", "Balance"],
           shown.map((r) => [
-            r.date,
+            (r.date ?? "") > today ? `${r.date} (scheduled)` : r.date,
             r.type,
             truncate(
-              r.tx.Comment?.trim() ||
-                r.tx.Reference?.trim() ||
-                (r.tx.ChargeTypeID ? chargeNames.get(r.tx.ChargeTypeID) : undefined) ||
-                "",
+              [
+                r.tx.Description?.trim() || (r.tx.ChargeTypeID ? chargeNames.get(r.tx.ChargeTypeID) : undefined) || r.tx.Comment?.trim(),
+                r.tx.Reference?.trim(),
+              ]
+                .filter(Boolean)
+                .join(" - "),
               80
             ),
             r.signed > 0 ? money(r.signed) : "",
@@ -250,9 +267,13 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
             money(r.running),
           ])
         );
-        const ending = ledger[ledger.length - 1].running;
-        if (tenant.CurrentBalance !== undefined && Math.abs(ending - tenant.CurrentBalance) > 0.01) {
-          out += `\n_Note: the running balance (${money(ending)}) differs from Rent Manager's current balance (${money(tenant.CurrentBalance)}). Deposits or transaction types this tool doesn't recognize may be the cause; trust Rent Manager's figure._\n`;
+        if (ledger.some((r) => (r.date ?? "") > today)) {
+          out += "\n_Rows marked (scheduled) are charges Rent Manager posted ahead of their due date; they aren't owed yet._\n";
+        }
+        // Compare the ledger with Rent Manager's allocation-based figure, both as of today.
+        const ledgerToday = [...ledger].reverse().find((r) => (r.date ?? "") <= today)?.running ?? 0;
+        if (exact && Math.abs(ledgerToday - balance.balance) > 0.01) {
+          out += `\n_Note: the running balance through today (${money(ledgerToday)}) differs from the balance due from Rent Manager's open charges (${money(balance.balance)}). Deposits or prepayments held as credits can cause this; the balance due figure is the one to collect._\n`;
         }
         return out;
       })
@@ -291,11 +312,11 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
     {
       title: "Get delinquencies",
       description:
-        "Delinquency report: tenants with a balance owed, sorted by amount, with estimated 0-30/31-60/61-90/90+ aging and last payment. Omit property_name for the whole portfolio.",
+        "Delinquency report: tenants with a balance due, sorted by amount, with 0-30/31-60/61-90/90+ aging and last payment. Charges posted ahead of their due date are not counted. Omit property_name for the whole portfolio.",
       inputSchema: {
         property_name: z.string().min(1).optional().describe("Property name or ID. Omit for all properties."),
         min_balance: z.number().min(0).default(0.01).describe("Only include balances at or above this amount"),
-        include_aging: z.boolean().default(true).describe("Look up each tenant's ledger for aging (slower on large portfolios)"),
+        include_aging: z.boolean().default(true).describe("Include aging buckets and last payment"),
         include_past_tenants: z.boolean().default(false).describe("Also include moved-out tenants who still owe"),
         limit: z.number().int().min(1).max(1000).default(100).describe("Maximum rows to show"),
       },
@@ -304,7 +325,7 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
     ({ property_name, min_balance, include_aging, include_past_tenants, limit }) =>
       run(async () => {
         const property = property_name ? await svc.resolveProperty(property_name) : undefined;
-        const { records, agingSkipped } = await svc.getDelinquencies({
+        const { records, agingSkipped, exact } = await svc.getDelinquencies({
           propertyId: property?.PropertyID,
           minBalance: Math.max(min_balance, 0.01),
           includeAging: include_aging,
@@ -332,7 +353,7 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
         out += table(
           ["Tenant", "Tenant ID", "Unit", ...(property ? [] : ["Property"]), "Balance", "0-30", "31-60", "61-90", "90+", "Days Past Due", "Last Payment"],
           shown.map((r) => [
-            r.tenantName + (r.tenant.IsActive === false ? " (past)" : ""),
+            r.tenantName + (isCurrentTenant(r.tenant) ? "" : ` (${tenantStatus(r.tenant).toLowerCase()})`),
             r.tenant.TenantID,
             r.unitName,
             ...(property ? [] : [r.propertyName]),
@@ -346,10 +367,8 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
           ])
         );
         if (records.length > shown.length) out += `\n…${records.length - shown.length} more not shown (raise limit).\n`;
-        if (include_aging) {
-          out += "\n_Aging is estimated by applying payments to the oldest charges first._\n";
-          if (agingSkipped) out += `_Aging was skipped for the ${agingSkipped} smallest balances to limit API calls._\n`;
-        }
+        out += agingNote(exact);
+        if (agingSkipped) out += `_${agingSkipped} tenants were not checked to limit API calls; narrow to one property for a full list._\n`;
         return out;
       })
   );
@@ -441,7 +460,7 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
           out += "\n_Recurring charges could not be read, so rent amounts are not shown._\n";
         }
         if (roll.chargesIncluded) {
-          out += "\n_Rent is the sum of active recurring charges whose charge type name contains \"rent\"; everything else is listed as other recurring._\n";
+          out += "\n_Rent is the sum of active recurring charges whose charge type contains \"rent\" (e.g. Lot Rent, Park Owned Home Monthly Rent); everything else is listed as other recurring. Balances are amounts due today._\n";
         }
         if (roll.unlinked.length) {
           out += `\n_${roll.unlinked.length} current tenant(s) at this property are not linked to an active unit: ${roll.unlinked.slice(0, 10).map(tenantName).join(", ")}${roll.unlinked.length > 10 ? ", …" : ""}._\n`;
@@ -496,7 +515,7 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
         return (
           `## Portfolio Summary\n\nAs of ${svc.today()}\n\n` +
           table(["Property", "Units", "Occupied", "Vacant", "Occupancy", "On Notice", "Net Receivables", "Delinquent Tenants", "Delinquent $"], body) +
-          "\n_Net receivables subtract prepaid (credit) balances; Delinquent $ counts only tenants who owe._\n"
+          "\n_Receivables are current tenants' balances due today (charges posted ahead of their due date aren't counted), net of prepaid credits; Delinquent $ counts only tenants who owe. Occupied excludes signed tenants who haven't moved in._\n"
         );
       })
   );
@@ -563,7 +582,7 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
         "Filters use Rent Manager syntax 'Field,operator,value' joined by ';' (operators: eq, ne, gt, ge, lt, le, ct, sw, ew, in, bt).",
       inputSchema: {
         path: z.string().min(1).describe("Resource path, e.g. 'Units' or 'Tenants/123/RecurringCharges'"),
-        filters: z.string().optional().describe("e.g. 'PropertyID,eq,3;IsActive,eq,true'"),
+        filters: z.string().optional().describe("e.g. 'PropertyID,eq,3;Status,eq,Current'. Related records work too, e.g. 'Leases.UnitID,eq,12'"),
         fields: z.string().optional().describe("Comma-separated field list"),
         embed: z.string().optional().describe("Comma-separated related objects to embed"),
         orderby: z.string().optional().describe("e.g. 'Name' or 'CreateDate DESC'"),
@@ -588,7 +607,7 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
           pagesize,
           pagenumber,
         });
-        const count = Array.isArray(data) ? `${data.length} record(s), page ${pagenumber}` : "1 record";
+        const count = Array.isArray(data) ? `${data.length} record(s), page ${pagenumber}` : data == null ? "0 records" : "1 record";
         return `GET /${clean} → ${count}\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``;
       })
   );
@@ -642,7 +661,7 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
         description: z.string().trim().min(1).max(8000).describe("Full details of the issue"),
         property_name: z.string().min(1).describe("Property name or ID"),
         unit_name: z.string().min(1).optional().describe("Unit/lot name or number"),
-        tenant_id: z.number().int().positive().optional().describe("TenantID to link (find it with search_tenants)"),
+        tenant_id: z.number().int().positive().optional().describe("TenantID (find it with search_tenants); their name and ID are added to the description"),
         category_id: z.number().int().positive().optional(),
         priority_id: z.number().int().positive().optional(),
         status_id: z.number().int().positive().optional(),
@@ -653,21 +672,23 @@ export function registerTools(server: McpServer, svc: RentManagerService, opts: 
       run(async () => {
         const property = await svc.resolveProperty(property_name);
         const unit = unit_name ? await svc.resolveUnit(property, unit_name) : undefined;
-        const created = await svc.createWorkOrder({
+        const tenant = tenant_id ? await svc.getTenant(tenant_id) : undefined;
+        const { issue, warnings } = await svc.createWorkOrder({
           title,
           description,
           propertyId: property.PropertyID,
           unitId: unit?.UnitID,
-          tenantId: tenant_id,
+          tenant,
           categoryId: category_id,
           priorityId: priority_id,
           statusId: status_id,
         });
         return [
           "Work order created.",
-          created?.ServiceManagerIssueID ? `- Issue ID: ${created.ServiceManagerIssueID}` : "- Rent Manager did not return an issue ID.",
-          `- Property: ${property.Name}${unit ? ` | Unit: ${unitLabel(unit)}` : ""}${tenant_id ? ` | Tenant ID: ${tenant_id}` : ""}`,
+          issue?.ServiceManagerIssueID ? `- Issue ID: ${issue.ServiceManagerIssueID}` : "- Rent Manager did not return an issue ID.",
+          `- Property: ${property.Name}${unit ? ` | Unit: ${unitLabel(unit)}` : ""}${tenant ? ` | Tenant: ${tenantName(tenant)}` : ""}`,
           `- Title: ${title}`,
+          ...warnings.map((w) => `- Warning: ${w}`),
         ].join("\n");
       })
   );

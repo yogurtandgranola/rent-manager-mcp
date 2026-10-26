@@ -8,6 +8,8 @@ export interface MockRequest {
   query: URLSearchParams;
   headers: Record<string, string>;
   body: unknown;
+  /** Status the fake answered with, filled in after the handler runs. */
+  status?: number;
 }
 
 export interface MockResponse {
@@ -52,6 +54,7 @@ export function mockFetch(handler: Handler) {
     if (!res && req.path === "/Authentication/AuthorizeUser") res = { body: "token-1" };
     if (!res) res = { status: 404, body: { UserMessage: `No route ${req.method} ${req.path}` } };
     const status = res.status ?? 200;
+    req.status = status;
     const payload = res.body === undefined ? null : JSON.stringify(res.body);
     return new Response(status === 204 ? null : payload, {
       status,

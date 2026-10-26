@@ -50,6 +50,7 @@ export interface Tenant {
   UnitID?: number;
   IsActive?: boolean;
   CurrentBalance?: number;
+  /** "Current", "Past" or "Future" on instances without IsActive. */
   Status?: string;
 }
 
@@ -70,6 +71,8 @@ export interface Transaction {
   TransactionDate: string;
   TransactionType?: string;
   Type?: string;
+  /** Charge type or payment label, e.g. "Lot Rent", "Payment Received". */
+  Description?: string;
   Comment?: string;
   Reference?: string;
   ChargeTypeID?: number;
@@ -95,6 +98,9 @@ export interface ChargeType {
 export interface RecurringCharge {
   RecurringChargeID: number;
   TenantID?: number;
+  EntityType?: string;
+  EntityKeyID?: number;
+  UnitID?: number;
   ChargeTypeID?: number;
   Amount: number;
   Frequency?: string | number;
@@ -128,6 +134,32 @@ export interface ServiceManagerIssue {
   Unit?: Unit;
 }
 
+/** An unpaid (or partly paid) charge: what the tenant still owes on it is Amount - AmountAllocated. */
+export interface OpenCharge {
+  ChargeID: number;
+  AccountID: number;
+  Amount: number;
+  AmountAllocated?: number;
+  TransactionDate: string;
+  ChargeTypeID?: number;
+  UnitID?: number;
+}
+
+/** A payment not yet fully applied to charges: the remainder is a credit on the account. */
+export interface OpenPayment {
+  PaymentID: number;
+  AccountID: number;
+  Amount: number;
+  AmountAllocated?: number;
+  TransactionDate: string;
+  ReversalDate?: string | null;
+}
+
+export interface LookupRow {
+  Name?: string;
+  [key: string]: unknown;
+}
+
 // ── Derived shapes produced by the service layer ──
 
 export interface AgingBuckets {
@@ -138,6 +170,8 @@ export interface AgingBuckets {
 }
 
 export interface AgingResult {
+  /** What the tenant owes as of today: open charges dated today or earlier, less unapplied credits. */
+  balance?: number;
   buckets: AgingBuckets;
   oldestUnpaidDate: string | null;
   daysPastDue: number;

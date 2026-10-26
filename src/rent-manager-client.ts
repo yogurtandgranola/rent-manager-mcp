@@ -56,7 +56,12 @@ function toSearchParams(query: QueryOptions = {}): URLSearchParams {
   const params = new URLSearchParams();
   if (query.filters?.length) params.set("filters", query.filters.join(";"));
   if (query.fields?.length) params.set("fields", query.fields.join(","));
-  if (query.embed?.length) params.set("embed", query.embed.join(","));
+  // Instances differ on the parameter name (the one this was built against
+  // ignores "embed" and reads "embeds"); unknown parameters are ignored, so send both.
+  if (query.embed?.length) {
+    params.set("embed", query.embed.join(","));
+    params.set("embeds", query.embed.join(","));
+  }
   if (query.orderby?.length) params.set("orderby", query.orderby.join(","));
   if (query.pagesize !== undefined) params.set("pagesize", String(query.pagesize));
   if (query.pagenumber !== undefined) params.set("pagenumber", String(query.pagenumber));

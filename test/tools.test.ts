@@ -61,16 +61,20 @@ test("get_rent_roll renders a summary and unit table", async () => {
   assert.equal(isError, false, text);
   assert.match(text, /Rent Roll - Sunflower Estates/);
   assert.match(text, /\*\*4\*\* units \| Occupied \*\*2\*\* \(50\.0%\)/);
-  assert.match(text, /Monthly rent \*\*\$1,025\.00\*\*/);
-  assert.match(text, /\| Lot 2 \| Bob Jones \| Notice \(out 2026-11-30\) \|/);
+  assert.match(text, /Monthly rent \*\*\$1,250\.00\*\*/);
+  assert.match(text, /\| SA-2 \| Lot \| Bob Jones \| Notice \(out 2026-11-30\) \| 2019-06-15 \| \$750\.00 \|/);
+  assert.match(text, /\| SA-10 \| Lot \| Carol Smith \| Pending Move-In \|/);
 });
 
 test("get_rent_roll csv has one column per charge type", async () => {
   const { call } = await connect();
   const { text } = await call("get_rent_roll", { property_name: "SUN", format: "csv" });
   const [header, firstRow] = text.trim().split("\n");
-  assert.equal(header, "Unit,Unit Type,Status,Tenant,Tenant IDs,Move In,Move Out,Monthly Rent,Other Recurring,Balance,Lot Rent,Water");
-  assert.equal(firstRow, "Lot 1,,Occupied,Alice Smith,1,2021-04-01,,500.00,40.00,450.00,500.00,40.00");
+  assert.equal(
+    header,
+    "Unit,Unit Type,Status,Tenant,Tenant IDs,Move In,Move Out,Monthly Rent,Other Recurring,Balance,Lot Rent,Park Owned Home Monthly Rent,Water Utility"
+  );
+  assert.equal(firstRow, "SA-1,Lot,Occupied,Alice Smith,1,2021-04-01,,500.00,40.00,450.00,500.00,0.00,40.00");
 });
 
 test("get_tenant_ledger lists matches instead of picking the first one", async () => {
@@ -81,13 +85,26 @@ test("get_tenant_ledger lists matches instead of picking the first one", async (
   assert.ok(!calls.some((c) => /Transactions/.test(c.path)), "no ledger fetched for an ambiguous tenant");
 });
 
-test("get_tenant_ledger shows a running balance", async () => {
+test("get_tenant_ledger shows a running balance and flags charges posted early", async () => {
   const { call } = await connect();
   const { text, isError } = await call("get_tenant_ledger", { tenant_id: 1 });
   assert.equal(isError, false, text);
-  assert.match(text, /\| 2026-09-08 \| Payment \| Check 1042 \| - \| \$590\.00 \| -\$90\.00 \|/);
-  assert.match(text, /\| 2026-10-01 \| Charge \| Water \| \$40\.00 \| - \| \$450\.00 \|/);
-  assert.doesNotMatch(text, /differs from Rent Manager/);
+  assert.match(text, /\*\*Unit:\*\* SA-1 .*\*\*Balance due today:\*\* \$450\.00/);
+  assert.match(text, /\| 2026-09-08 \| Payment \| Payment Received - Check #: 1042 \| - \| \$590\.00 \| -\$90\.00 \|/);
+  assert.match(text, /\| 2026-10-01 \| Charge \| Water Utility \| \$40\.00 \| - \| \$450\.00 \|/);
+  assert.match(text, /\| 2026-11-01 \(scheduled\) \| Charge \| Lot Rent \|/);
+  assert.doesNotMatch(text, /differs from/);
+});
+
+test("report tools work against an instance without IsActive, UnitID or balance fields", async () => {
+  const { call, calls } = await connect();
+  for (const name of ["get_portfolio_summary", "get_delinquencies"]) {
+    const { text, isError } = await call(name);
+    assert.equal(isError, false, `${name}: ${text}`);
+  }
+  const { text } = await call("get_delinquencies");
+  assert.match(text, /\| Alice Smith \| 1 \| SA-1 \| Sunflower Estates \| \$450\.00 \|/);
+  assert.ok(!calls.some((c) => c.status === 400), "no request was rejected");
 });
 
 test("add_tenant_note will not write when the tenant is ambiguous", async () => {
@@ -98,27 +115,44 @@ test("add_tenant_note will not write when the tenant is ambiguous", async () => 
 });
 
 test("create_work_order posts a Service Manager issue for the resolved lot", async () => {
-  const { call, calls } = await connect((req) =>
-    req.method === "POST" && req.path === "/ServiceManagerIssues" ? { body: { ServiceManagerIssueID: 555 } } : fixtureApi(req)
-  );
+  const { call, calls } = await connect((req) => {
+    if (req.method === "POST" && req.path === "/ServiceManagerIssues") return { body: { ServiceManagerIssueID: 555 } };
+    if (req.method === "POST" && /\/555\/Link(Property|Unit)$/.test(req.path)) return { status: 204 };
+    return fixtureApi(req);
+  });
   const { text, isError } = await call("create_work_order", {
     title: "Water leak",
     description: "Leak under the home",
     property_name: "Sunflower",
-    unit_name: "Lot 1",
+    unit_name: "1",
     tenant_id: 1,
   });
   assert.equal(isError, false, text);
   assert.match(text, /Issue ID: 555/);
-  const post = calls.find((c) => c.path === "/ServiceManagerIssues")!;
-  assert.deepEqual(post.body, {
+  assert.doesNotMatch(text, /Warning/);
+  const posts = calls.filter((c) => c.method === "POST" && c.path.startsWith("/ServiceManagerIssues"));
+  // Issues have no property, unit or tenant fields: they're linked afterwards.
+  assert.deepEqual(posts[0].body, {
     Title: "Water leak",
-    Description: "Leak under the home",
+    Description: "Leak under the home\n\nTenant: Alice Smith (tenant ID 1)",
     IsClosed: false,
-    PropertyID: 1,
-    UnitID: 101,
-    TenantID: 1,
   });
+  assert.deepEqual(posts.slice(1).map((c) => [c.path, c.query.toString()]), [
+    ["/ServiceManagerIssues/555/LinkProperty", "propertyID=1"],
+    ["/ServiceManagerIssues/555/LinkUnit", "unitID=101"],
+  ]);
+});
+
+test("create_work_order reports a link failure without hiding the new issue", async () => {
+  const { call } = await connect((req) => {
+    if (req.method === "POST" && req.path === "/ServiceManagerIssues") return { body: { ServiceManagerIssueID: 556 } };
+    if (req.method === "POST" && req.path.endsWith("/LinkUnit")) return { status: 400, body: { UserMessage: "Unit not on property" } };
+    return fixtureApi(req);
+  });
+  const { text, isError } = await call("create_work_order", { title: "x", description: "y", property_name: "SUN", unit_name: "1" });
+  assert.equal(isError, false, text);
+  assert.match(text, /Issue ID: 556/);
+  assert.match(text, /Warning: Couldn't link the lot: .*Unit not on property/);
 });
 
 test("rm_api_get passes query options through and blocks auth endpoints", async () => {
