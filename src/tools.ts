@@ -58,7 +58,14 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: true } as const;
 
-export function registerTools(server: McpServer, svc: RentManagerService): void {
+export interface ToolOptions {
+  /** Register add_tenant_note and create_work_order. */
+  allowWrites: boolean;
+  /** Signed-in user on the hosted server, shown by test_connection. */
+  userEmail?: string;
+}
+
+export function registerTools(server: McpServer, svc: RentManagerService, opts: ToolOptions): void {
   const resolveTenant = (args: TenantSelector) =>
     svc.resolveTenant({
       tenantId: args.tenant_id,
@@ -94,9 +101,10 @@ export function registerTools(server: McpServer, svc: RentManagerService): void 
           "Connected to Rent Manager.",
           `- API: ${svc.config.baseUrl}`,
           `- Location ID: ${svc.config.locationId}`,
-          `- Auth: ${svc.config.username ? `user "${svc.config.username}"` : "API token"}`,
+          `- Rent Manager login: ${svc.config.username ? `API user "${svc.config.username}"` : "API token"}`,
+          ...(opts.userEmail ? [`- Signed in as: ${opts.userEmail}`] : []),
           `- Properties visible: ${properties.length} (${active} active)`,
-          `- Mode: ${svc.config.readOnly ? "read-only (write tools disabled)" : "read/write"}`,
+          `- Mode: ${opts.allowWrites ? "read/write" : "read-only (write tools disabled)"}`,
           `- Round trip: ${Date.now() - started} ms`,
         ].join("\n");
       })
@@ -585,9 +593,9 @@ export function registerTools(server: McpServer, svc: RentManagerService): void 
       })
   );
 
-  if (svc.config.readOnly) return;
+  if (!opts.allowWrites) return;
 
-  // ── Write tools (disabled when RM_READ_ONLY=true) ──
+  // ── Write tools (off with RM_READ_ONLY=true, and for non-editors on the hosted server) ──
 
   server.registerTool(
     "add_tenant_note",

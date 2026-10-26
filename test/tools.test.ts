@@ -11,7 +11,7 @@ import { makeService, type Handler } from "./helpers.js";
 async function connect(handler: Handler = fixtureApi, config: Partial<RentManagerConfig> = {}) {
   const { service, calls } = makeService(handler, config);
   const server = new McpServer({ name: "rent-manager-test", version: "0.0.0" });
-  registerTools(server, service);
+  registerTools(server, service, { allowWrites: !service.config.readOnly });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test", version: "0.0.0" });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);

@@ -29,7 +29,12 @@ Tenant tools accept a `tenant_id`, a `tenant_name`, or a `property_name` + `unit
 - **Read-only mode.** Set `RM_READ_ONLY=true` to remove `add_tenant_note` and `create_work_order` entirely.
 - Credentials stay on your machine and are only sent to your Rent Manager API host.
 
-## Setup
+## Two ways to run it
+
+- **On your own computer** (below): Claude Desktop or Claude Code starts the server locally. Only you can use it.
+- **Hosted for your team**: the server runs online (Render), people sign in with company Google accounts, and it works in Claude on web, desktop and mobile. Team members are read-only; only `EDITOR_EMAILS` can write. Follow the step-by-step guide in [docs/TEAM_SETUP.md](docs/TEAM_SETUP.md).
+
+## Setup (on your own computer)
 
 ### 1. Get API access
 
@@ -131,6 +136,9 @@ Tests run against a mocked Rent Manager API and don't need credentials.
 | `src/rent-manager-client.ts` | HTTP client: login, token handling, RQL filters, paging, retries, errors |
 | `src/services.ts` | Rent Manager logic: name matching, aging, occupancy, rent roll |
 | `src/tools.ts` | MCP tool definitions and output formatting |
+| `src/http.ts` | Hosted mode (`--http`): Streamable HTTP endpoint at `/mcp` behind OAuth |
+| `src/auth.ts` | OAuth server for Claude connectors, using Google for sign-in; stateless sealed tokens |
+| `render.yaml` | Render Blueprint for the hosted mode |
 
 ### Possible next tools
 
