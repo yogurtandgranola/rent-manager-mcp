@@ -12,7 +12,7 @@ import { RentManagerClient } from "./rent-manager-client.js";
 import { RentManagerService } from "./services.js";
 import { registerTools } from "./tools.js";
 
-const VERSION = "2.1.1";
+const VERSION = "2.2.0";
 
 // Load .env from the project root (one level above src/ or dist/). Variables
 // already set in the environment, e.g. from claude_desktop_config.json, win.

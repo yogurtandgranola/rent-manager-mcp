@@ -5,6 +5,9 @@ import type {
   DelinquencyRecord,
   HistoryItem,
   Lease,
+  LookupRow,
+  OpenCharge,
+  OpenPayment,
   Property,
   RecurringCharge,
   RentManagerConfig,
@@ -25,23 +28,23 @@ export class UserFacingError extends Error {
   }
 }
 
-// Field lists taken from the Rent Manager SDK examples. If an instance rejects
-// one of them, the client retries the request without a field list.
+// Field lists checked against a live Rent Manager 12 instance. If an instance
+// rejects one, the client retries the request without a field list.
+//
+// Tenants there have no IsActive, UnitID, Email or usable balance field:
+// status is Status ("Current" / "Past" / "Future"), the lot comes from Leases,
+// email from Contacts, and balances from open Charges and Payments.
 const PROPERTY_FIELDS = ["PropertyID", "Name", "ShortName", "IsActive"];
-const TENANT_FIELDS = [
-  "TenantID",
-  "TenantDisplayID",
-  "Name",
-  "FirstName",
-  "LastName",
-  "Email",
-  "PropertyID",
-  "UnitID",
-  "IsActive",
-  "CurrentBalance",
-];
-const UNIT_FIELDS = ["UnitID", "PropertyID", "Name", "UnitNumber", "UnitTypeID", "IsActive"];
+const TENANT_FIELDS = ["TenantID", "TenantDisplayID", "Name", "FirstName", "LastName", "PropertyID", "Status"];
+const UNIT_FIELDS = ["UnitID", "PropertyID", "Name", "UnitTypeID"];
 const LEASE_FIELDS = ["LeaseID", "TenantID", "UnitID", "PropertyID", "MoveInDate", "MoveOutDate"];
+const CHARGE_FIELDS = ["ChargeID", "AccountID", "Amount", "AmountAllocated", "TransactionDate", "ChargeTypeID", "UnitID"];
+const PAYMENT_FIELDS = ["PaymentID", "AccountID", "Amount", "AmountAllocated", "TransactionDate", "ReversalDate"];
+const RECURRING_FIELDS = ["RecurringChargeID", "EntityKeyID", "UnitID", "ChargeTypeID", "Amount", "Frequency", "FromDate", "ToDate"];
+
+const CURRENT_TENANTS = rql.eq("Status", "Current");
+/** Current and future (signed, not yet moved in) tenants. */
+const NOT_PAST_TENANTS = rql.ne("Status", "Past");
 
 const CONCURRENCY = 5;
 const MAX_AGING_LOOKUPS = 250;
@@ -58,6 +61,20 @@ export function normalize(text: string | number | null | undefined): string {
 export function tenantName(t: Tenant): string {
   const full = [t.FirstName, t.LastName].filter(Boolean).join(" ").trim();
   return t.Name?.trim() || full || `Tenant #${t.TenantID}`;
+}
+
+/** Current tenants count as active; past and future (not yet moved in) don't. */
+export function isCurrentTenant(t: Tenant): boolean {
+  if (t.Status) return /^(current|notice)/i.test(t.Status);
+  return t.IsActive !== false;
+}
+
+export function tenantStatus(t: Tenant): string {
+  return t.Status ?? (t.IsActive === false ? "Past" : "Current");
+}
+
+function isFutureTenant(t: Tenant): boolean {
+  return /^future/i.test(t.Status ?? "");
 }
 
 export function unitLabel(u: Unit | undefined): string {
@@ -133,9 +150,9 @@ export function buildLedger(txs: Transaction[]): LedgerRow[] {
 }
 
 /**
- * Estimates aging by applying all payments and credits to the oldest charges
- * first. Rent Manager allocates payments to specific charges, so the buckets
- * are an approximation; the total open amount still equals the ledger balance.
+ * Ages what is owed as of a date by applying payments and credits to the
+ * oldest charges first. Transactions dated after asOf are ignored: Rent
+ * Manager posts next month's charges early, and those aren't due yet.
  */
 export function computeAging(txs: Transaction[], asOf: string): AgingResult {
   const charges: Array<{ date: string; open: number }> = [];
@@ -143,6 +160,7 @@ export function computeAging(txs: Transaction[], asOf: string): AgingResult {
   let lastPayment: Transaction | null = null;
 
   for (const tx of sortTransactions(txs)) {
+    if ((datePart(tx.TransactionDate) ?? "") > asOf) continue;
     const signed = signedAmount(tx);
     if (signed > 0) charges.push({ date: datePart(tx.TransactionDate) ?? asOf, open: signed });
     else credit += -signed;
@@ -156,6 +174,7 @@ export function computeAging(txs: Transaction[], asOf: string): AgingResult {
     credit -= applied;
   }
 
+  const owed = charges.reduce((sum, c) => sum + c.open, 0) - credit;
   const buckets = { current: 0, days31to60: 0, days61to90: 0, over90: 0 };
   let oldestUnpaidDate: string | null = null;
   for (const charge of charges) {
@@ -169,6 +188,7 @@ export function computeAging(txs: Transaction[], asOf: string): AgingResult {
   }
 
   return {
+    balance: round2(owed),
     buckets: {
       current: round2(buckets.current),
       days31to60: round2(buckets.days31to60),
@@ -179,6 +199,49 @@ export function computeAging(txs: Transaction[], asOf: string): AgingResult {
     daysPastDue: oldestUnpaidDate ? Math.max(0, daysBetween(oldestUnpaidDate, asOf)) : 0,
     lastPaymentDate: lastPayment ? datePart(lastPayment.TransactionDate) : null,
     lastPaymentAmount: lastPayment ? Math.abs(Number(lastPayment.Amount) || 0) : null,
+  };
+}
+
+export type Balance = AgingResult & { balance: number };
+
+/**
+ * Balances and aging from Rent Manager's own allocations: each open charge
+ * still owes Amount - AmountAllocated, and each payment's unallocated
+ * remainder is a credit. Only charges dated on or before asOf count, because
+ * next month's charges are posted ahead of time.
+ */
+export function balancesFromOpenItems(charges: OpenCharge[], payments: OpenPayment[], asOf: string): Map<number, Balance> {
+  const txs = new Map<number, Transaction[]>();
+  const add = (account: number, tx: Transaction) => {
+    const list = txs.get(account) ?? [];
+    list.push(tx);
+    txs.set(account, list);
+  };
+  for (const c of charges) {
+    const open = (Number(c.Amount) || 0) - (Number(c.AmountAllocated) || 0);
+    if (open > 0.005) add(c.AccountID, { TransactionType: "Charge", Amount: open, TransactionDate: c.TransactionDate });
+  }
+  for (const p of payments) {
+    if (p.ReversalDate) continue;
+    const unapplied = (Number(p.Amount) || 0) - (Number(p.AmountAllocated) || 0);
+    if (unapplied > 0.005) add(p.AccountID, { TransactionType: "Credit", Amount: unapplied, TransactionDate: asOf });
+  }
+  const result = new Map<number, Balance>();
+  for (const [account, list] of txs) {
+    const aging = computeAging(list, asOf);
+    result.set(account, { ...aging, balance: aging.balance ?? 0 });
+  }
+  return result;
+}
+
+function zeroBalance(balance = 0): Balance {
+  return {
+    balance,
+    buckets: { current: 0, days31to60: 0, days61to90: 0, over90: 0 },
+    oldestUnpaidDate: null,
+    daysPastDue: 0,
+    lastPaymentDate: null,
+    lastPaymentAmount: null,
   };
 }
 
@@ -196,6 +259,11 @@ export function matchUnit(units: Unit[], input: string): Unit[] {
   const keys = (u: Unit) => [u.Name, u.UnitNumber].filter((k): k is string => Boolean(k)).map(unitKey);
   const exact = units.filter((u) => keys(u).includes(wanted));
   if (exact.length) return exact;
+  // "12" means lot 12 in a property whose lots are named "SA-12", not SA-120.
+  if (/^\d+$/.test(wanted)) {
+    const byNumber = units.filter((u) => keys(u).some((k) => (/(\d+)$/.exec(k)?.[1] ?? "").replace(/^0+(?=\d)/, "") === wanted));
+    if (byNumber.length) return byNumber;
+  }
   return units.filter((u) => keys(u).some((k) => k.includes(wanted)));
 }
 
@@ -249,7 +317,7 @@ export function buildOccupancy(
     if (!entry.tenants.some((t) => t.TenantID === tenant.TenantID)) entry.tenants.push(tenant);
     if (moveIn && (!entry.moveIn || moveIn < entry.moveIn)) entry.moveIn = moveIn;
     if (moveOut && (!entry.moveOut || moveOut > entry.moveOut)) entry.moveOut = moveOut;
-    entry.futureOnly &&= Boolean(moveIn && moveIn > today);
+    entry.futureOnly &&= Boolean(moveIn && moveIn > today) || isFutureTenant(tenant);
     byUnit.set(unitId, entry);
     linked.add(tenant.TenantID);
   };
@@ -329,6 +397,7 @@ export class RentManagerService {
   private readonly properties = new TtlCache<Property[]>(5 * 60_000);
   private readonly chargeTypes = new TtlCache<Map<number, string>>(30 * 60_000);
   private readonly unitTypes = new TtlCache<Map<number, string>>(30 * 60_000);
+  private readonly workOrderLookups = new TtlCache<Record<"status" | "priority" | "category", Map<number, string>>>(30 * 60_000);
 
   constructor(
     readonly client: RentManagerClient,
@@ -433,7 +502,35 @@ export class RentManagerService {
     return names;
   }
 
+  /**
+   * Fills in UnitID (and PropertyID) from each tenant's lease, for instances
+   * where the tenant record doesn't carry the unit. Prefers the current lease.
+   */
+  async attachUnits(tenants: Tenant[]): Promise<void> {
+    const missing = tenants.filter((t) => !t.UnitID);
+    if (!missing.length) return;
+    const today = this.today();
+    const best = new Map<number, Lease>();
+    const score = (l: Lease) => `${!datePart(l.MoveOutDate) || datePart(l.MoveOutDate)! >= today ? 1 : 0}${datePart(l.MoveInDate) ?? ""}`;
+    for (const ids of chunk([...new Set(missing.map((t) => t.TenantID))], 100)) {
+      const leases = await this.client
+        .getAll<Lease>("/Leases", { filters: [rql.in("TenantID", ids)], fields: LEASE_FIELDS })
+        .catch(() => [] as Lease[]);
+      for (const lease of leases) {
+        const current = best.get(lease.TenantID);
+        if (!current || score(lease) > score(current)) best.set(lease.TenantID, lease);
+      }
+    }
+    for (const t of missing) {
+      const lease = best.get(t.TenantID);
+      if (!lease) continue;
+      t.UnitID = lease.UnitID;
+      t.PropertyID ??= lease.PropertyID;
+    }
+  }
+
   async labelTenants(tenants: Tenant[]): Promise<Map<number, TenantLabel>> {
+    await this.attachUnits(tenants);
     const [properties, units] = await Promise.all([
       this.listProperties(true),
       this.unitNameMap(tenants.map((t) => t.UnitID ?? 0)),
@@ -464,12 +561,12 @@ export class RentManagerService {
 
     const base: string[] = [];
     if (opts.propertyId) base.push(rql.eq("PropertyID", opts.propertyId));
-    if (opts.activeOnly) base.push(rql.eq("IsActive", true));
+    if (opts.activeOnly) base.push(CURRENT_TENANTS);
+
+    if (isEmail) return this.searchTenantsByEmail(raw, base);
 
     const clauses = new Set<string>();
-    if (isEmail) {
-      clauses.add(rql.ct("Email", raw));
-    } else {
+    {
       const cleaned = rqlValue(raw);
       clauses.add(rql.ct("Name", cleaned));
       // One-letter fragments (the "o" in O'Brien) would match most of the tenant
@@ -502,7 +599,6 @@ export class RentManagerService {
     if (errors.length === clauses.size) throw errors[0];
 
     const results = [...found.values()].filter((t) => {
-      if (isEmail) return String(t.Email ?? "").toLowerCase().includes(raw.toLowerCase());
       const hay = normalize([t.Name, t.FirstName, t.LastName, t.TenantDisplayID, t.TenantID].join(" "));
       return tokens.every((tok) => hay.includes(tok));
     });
@@ -515,9 +611,30 @@ export class RentManagerService {
     return results.sort(
       (a, b) =>
         Number(isExact(b)) - Number(isExact(a)) ||
-        Number(b.IsActive !== false) - Number(a.IsActive !== false) ||
+        Number(isCurrentTenant(b)) - Number(isCurrentTenant(a)) ||
         tenantName(a).localeCompare(tenantName(b))
     );
+  }
+
+  /** Tenant email addresses live on their Contacts; older instances keep Email on the tenant. */
+  private async searchTenantsByEmail(email: string, base: string[]): Promise<Tenant[]> {
+    let ids: number[] = [];
+    try {
+      const contacts = await this.client.getAll<{ ParentID: number }>(
+        "/Contacts",
+        { filters: [rql.eq("ParentType", "Tenant"), rql.ct("Email", email)], fields: ["ContactID", "ParentID", "Email"] },
+        5
+      );
+      ids = [...new Set(contacts.map((c) => c.ParentID))];
+    } catch (err) {
+      if (!isMissingRoute(err)) throw err;
+      return this.client.getAll<Tenant>("/Tenants", { filters: [...base, rql.ct("Email", email)], fields: TENANT_FIELDS }, 5);
+    }
+    const tenants: Tenant[] = [];
+    for (const group of chunk(ids, 100)) {
+      tenants.push(...(await this.client.getAll<Tenant>("/Tenants", { filters: [...base, rql.in("TenantID", group)], fields: TENANT_FIELDS })));
+    }
+    return tenants.sort((a, b) => Number(isCurrentTenant(b)) - Number(isCurrentTenant(a)) || tenantName(a).localeCompare(tenantName(b)));
   }
 
   async getTenant(tenantId: number): Promise<Tenant> {
@@ -531,14 +648,6 @@ export class RentManagerService {
   }
 
   private async currentTenantsInUnit(unit: Unit): Promise<Tenant[]> {
-    const direct = await this.client
-      .getAll<Tenant>("/Tenants", { filters: [rql.eq("UnitID", unit.UnitID), rql.eq("IsActive", true)], fields: TENANT_FIELDS })
-      .catch((err) => {
-        if (isMissingRoute(err)) return [] as Tenant[];
-        throw err;
-      });
-    if (direct.length) return direct;
-
     const leases = await this.client
       .getAll<Lease>("/Leases", { filters: [rql.eq("UnitID", unit.UnitID)], fields: LEASE_FIELDS })
       .catch(() => [] as Lease[]);
@@ -548,7 +657,7 @@ export class RentManagerService {
     ];
     if (!ids.length) return [];
     const tenants = await this.client.getAll<Tenant>("/Tenants", { filters: [rql.in("TenantID", ids)], fields: TENANT_FIELDS });
-    return tenants.filter((t) => t.IsActive !== false);
+    return tenants.filter((t) => isCurrentTenant(t));
   }
 
   async describeTenants(tenants: Tenant[]): Promise<string> {
@@ -556,7 +665,7 @@ export class RentManagerService {
     return tenants
       .map((t) => {
         const l = labels.get(t.TenantID);
-        return `- ${tenantName(t)} (tenant ID ${t.TenantID}) | ${l?.unitName ?? "-"} at ${l?.propertyName ?? "-"} | ${t.IsActive === false ? "past" : "current"}`;
+        return `- ${tenantName(t)} (tenant ID ${t.TenantID}) | ${l?.unitName ?? "-"} at ${l?.propertyName ?? "-"} | ${tenantStatus(t).toLowerCase()}`;
       })
       .join("\n");
   }
@@ -623,7 +732,8 @@ export class RentManagerService {
   async chargeTypeNames(): Promise<Map<number, string>> {
     return this.chargeTypes.get(async () => {
       const types = await this.client.getAll<ChargeType>("/ChargeTypes").catch(() => [] as ChargeType[]);
-      return new Map(types.map((c) => [c.ChargeTypeID, c.Name || c.Description || `Charge type ${c.ChargeTypeID}`]));
+      // Names are often short codes ("LOT", "POH"); the description is what people recognise ("Lot Rent").
+      return new Map(types.map((c) => [c.ChargeTypeID, c.Description?.trim() || c.Name || `Charge type ${c.ChargeTypeID}`]));
     });
   }
 
@@ -661,6 +771,109 @@ export class RentManagerService {
     throw new Error("unreachable");
   }
 
+  // ── Balances ──
+
+  /**
+   * Exact balances from open charges and unapplied payments, a handful of
+   * requests however many tenants there are. Returns null when this instance
+   * doesn't offer those endpoints.
+   */
+  async getBalances(scope: { propertyId?: number; tenantIds?: number[] }): Promise<Map<number, Balance> | null> {
+    const open = rql.eq("IsFullyAllocated", false);
+    const charges: OpenCharge[] = [];
+    const payments: OpenPayment[] = [];
+    try {
+      if (scope.tenantIds) {
+        for (const ids of chunk([...new Set(scope.tenantIds)], 100)) {
+          const [c, p] = await Promise.all([
+            this.client.getAll<OpenCharge>("/Charges", { filters: [open, rql.in("AccountID", ids)], fields: CHARGE_FIELDS }),
+            this.client.getAll<OpenPayment>("/Payments", { filters: [open, rql.in("AccountID", ids)], fields: PAYMENT_FIELDS }),
+          ]);
+          charges.push(...c);
+          payments.push(...p);
+        }
+      } else {
+        // Payments can't be filtered by property, but the unapplied ones are few.
+        const [c, p] = await Promise.all([
+          this.client.getAll<OpenCharge>("/Charges", {
+            filters: [open, ...(scope.propertyId ? [rql.eq("PropertyID", scope.propertyId)] : [])],
+            fields: CHARGE_FIELDS,
+          }),
+          this.client.getAll<OpenPayment>("/Payments", { filters: [open], fields: PAYMENT_FIELDS }),
+        ]);
+        charges.push(...c);
+        payments.push(...p);
+      }
+    } catch (err) {
+      if (!isMissingRoute(err)) throw err;
+      console.error(`[rent-manager] open charges unavailable, falling back: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+    return balancesFromOpenItems(charges, payments, this.today());
+  }
+
+  /**
+   * Balance for each tenant given. Uses open charges when available, else the
+   * tenant's CurrentBalance field, else each tenant's ledger (slow; capped).
+   */
+  async balancesFor(
+    tenants: Tenant[],
+    scope: { propertyId?: number }
+  ): Promise<{ balances: Map<number, Balance>; exact: boolean; skipped: number }> {
+    const ids = tenants.map((t) => t.TenantID);
+    const exact = await this.getBalances(tenants.length <= 200 && !scope.propertyId ? { tenantIds: ids } : scope);
+    if (exact) {
+      return { balances: new Map(ids.map((id) => [id, exact.get(id) ?? zeroBalance()])), exact: true, skipped: 0 };
+    }
+    if (tenants.some((t) => t.CurrentBalance !== undefined)) {
+      return { balances: new Map(tenants.map((t) => [t.TenantID, zeroBalance(t.CurrentBalance ?? 0)])), exact: false, skipped: 0 };
+    }
+    const today = this.today();
+    const toAge = tenants.slice(0, MAX_AGING_LOOKUPS);
+    const results = await mapLimit(toAge, CONCURRENCY, async (t) => {
+      try {
+        const aging = computeAging(await this.getTransactions(t.TenantID), today);
+        return { ...aging, balance: aging.balance ?? 0 };
+      } catch {
+        return zeroBalance();
+      }
+    });
+    return {
+      balances: new Map(toAge.map((t, i) => [t.TenantID, results[i]])),
+      exact: false,
+      skipped: tenants.length - toAge.length,
+    };
+  }
+
+  /** Most recent non-reversed payment per tenant. */
+  async lastPayments(tenantIds: number[]): Promise<Map<number, { date: string; amount: number }>> {
+    const last = new Map<number, { date: string; amount: number }>();
+    for (const ids of chunk([...new Set(tenantIds)], 50)) {
+      const rows = await this.client
+        .getAll<OpenPayment>("/Payments", { filters: [rql.in("AccountID", ids)], fields: PAYMENT_FIELDS })
+        .catch(() => [] as OpenPayment[]);
+      for (const p of rows) {
+        const date = datePart(p.TransactionDate);
+        if (!date || p.ReversalDate) continue;
+        const seen = last.get(p.AccountID);
+        if (!seen || date > seen.date) last.set(p.AccountID, { date, amount: Math.abs(Number(p.Amount) || 0) });
+      }
+    }
+    return last;
+  }
+
+  /** One tenant's balance and aging, with their last payment. */
+  async getTenantBalance(tenant: Tenant): Promise<{ balance: Balance; exact: boolean }> {
+    const { balances, exact } = await this.balancesFor([tenant], {});
+    const balance = balances.get(tenant.TenantID) ?? zeroBalance();
+    if (exact) {
+      const last = (await this.lastPayments([tenant.TenantID])).get(tenant.TenantID);
+      balance.lastPaymentDate = last?.date ?? null;
+      balance.lastPaymentAmount = last?.amount ?? null;
+    }
+    return { balance, exact };
+  }
+
   // ── Delinquency ──
 
   async getDelinquencies(opts: {
@@ -668,44 +881,40 @@ export class RentManagerService {
     minBalance: number;
     includeAging: boolean;
     includePastTenants: boolean;
-  }): Promise<{ records: DelinquencyRecord[]; agingSkipped: number }> {
+  }): Promise<{ records: DelinquencyRecord[]; agingSkipped: number; exact: boolean }> {
     const filters: string[] = [];
     if (opts.propertyId) filters.push(rql.eq("PropertyID", opts.propertyId));
-    if (!opts.includePastTenants) filters.push(rql.eq("IsActive", true));
+    if (!opts.includePastTenants) filters.push(CURRENT_TENANTS);
     const tenants = await this.client.getAll<Tenant>("/Tenants", { filters, fields: TENANT_FIELDS });
-
-    if (tenants.length && tenants.every((t) => t.CurrentBalance === undefined)) {
-      throw new UserFacingError(
-        "Rent Manager returned tenants without a CurrentBalance field, so balances can't be read on this instance. " +
-          "Use rm_api_get on Tenants to see which balance fields your version returns."
-      );
-    }
+    const { balances, exact, skipped } = await this.balancesFor(tenants, { propertyId: opts.propertyId });
 
     const delinquent = tenants
-      .filter((t) => (t.CurrentBalance ?? 0) >= opts.minBalance)
-      .sort((a, b) => (b.CurrentBalance ?? 0) - (a.CurrentBalance ?? 0));
-    const labels = await this.labelTenants(delinquent);
-    const today = this.today();
+      .filter((t) => (balances.get(t.TenantID)?.balance ?? 0) >= opts.minBalance)
+      .sort((a, b) => (balances.get(b.TenantID)?.balance ?? 0) - (balances.get(a.TenantID)?.balance ?? 0));
+    const [labels, last] = await Promise.all([
+      this.labelTenants(delinquent),
+      opts.includeAging && exact ? this.lastPayments(delinquent.map((t) => t.TenantID)) : Promise.resolve(new Map<number, { date: string; amount: number }>()),
+    ]);
 
-    const toAge = opts.includeAging ? delinquent.slice(0, MAX_AGING_LOOKUPS) : [];
-    const aging = await mapLimit(toAge, CONCURRENCY, async (t) => {
-      try {
-        return computeAging(await this.getTransactions(t.TenantID), today);
-      } catch (err) {
-        console.error(`[rent-manager] aging lookup failed for tenant ${t.TenantID}: ${err instanceof Error ? err.message : err}`);
-        return null;
-      }
+    const records = delinquent.map((t) => {
+      const b = balances.get(t.TenantID) ?? zeroBalance();
+      const payment = last.get(t.TenantID);
+      return {
+        tenant: t,
+        tenantName: tenantName(t),
+        propertyName: labels.get(t.TenantID)?.propertyName ?? "-",
+        unitName: labels.get(t.TenantID)?.unitName ?? "-",
+        balance: b.balance,
+        aging: opts.includeAging
+          ? {
+              ...b,
+              lastPaymentDate: exact ? (payment?.date ?? null) : b.lastPaymentDate,
+              lastPaymentAmount: exact ? (payment?.amount ?? null) : b.lastPaymentAmount,
+            }
+          : null,
+      };
     });
-
-    const records = delinquent.map((t, i) => ({
-      tenant: t,
-      tenantName: tenantName(t),
-      propertyName: labels.get(t.TenantID)?.propertyName ?? "-",
-      unitName: labels.get(t.TenantID)?.unitName ?? "-",
-      balance: t.CurrentBalance ?? 0,
-      aging: aging[i] ?? null,
-    }));
-    return { records, agingSkipped: opts.includeAging ? Math.max(0, delinquent.length - MAX_AGING_LOOKUPS) : 0 };
+    return { records, agingSkipped: skipped, exact };
   }
 
   // ── Rent roll & occupancy ──
@@ -732,11 +941,12 @@ export class RentManagerService {
     const [units, tenants, leases] = await Promise.all([
       this.getUnits(property.PropertyID),
       this.client.getAll<Tenant>("/Tenants", {
-        filters: [rql.eq("PropertyID", property.PropertyID), rql.eq("IsActive", true)],
+        filters: [rql.eq("PropertyID", property.PropertyID), NOT_PAST_TENANTS],
         fields: TENANT_FIELDS,
       }),
       this.getLeases(property.PropertyID),
     ]);
+    const { balances } = await this.balancesFor(tenants, { propertyId: property.PropertyID });
     const unitIds = new Set(units.map((u) => u.UnitID));
     const { byUnit, unlinked } = buildOccupancy(tenants, leases, today);
     const unitTypes = units.some((u) => u.UnitTypeID) ? await this.unitTypeNames() : new Map<number, string>();
@@ -747,10 +957,7 @@ export class RentManagerService {
     let chargeNames = new Map<number, string>();
     if (includeCharges && occupantIds.length) {
       chargeNames = await this.chargeTypeNames();
-      const lists = await mapLimit(occupantIds, CONCURRENCY, (id) =>
-        this.client.getAll<RecurringCharge>(`/Tenants/${id}/RecurringCharges`).catch(() => null)
-      );
-      lists.forEach((list, i) => list && chargesByTenant.set(occupantIds[i], list));
+      for (const [id, list] of await this.recurringCharges(occupantIds)) chargesByTenant.set(id, list);
       chargesIncluded = chargesByTenant.size > 0;
     }
 
@@ -796,12 +1003,49 @@ export class RentManagerService {
         rent: round2(rent),
         otherRecurring: round2(otherRecurring),
         chargesByType,
-        balance: round2(occupants.reduce((sum, t) => sum + (t.CurrentBalance ?? 0), 0)),
+        balance: round2(occupants.reduce((sum, t) => sum + (balances.get(t.TenantID)?.balance ?? 0), 0)),
       };
     });
 
     rows.sort((a, b) => a.unitName.localeCompare(b.unitName, undefined, { numeric: true, sensitivity: "base" }));
-    return { property, rows, chargeTotals, chargesIncluded, unlinked: unlinked.filter((t) => !t.UnitID || !unitIds.has(t.UnitID)) };
+    return {
+      property,
+      rows,
+      chargeTotals,
+      chargesIncluded,
+      // Future tenants without a lease yet aren't missing a lot; only current ones are.
+      unlinked: unlinked.filter((t) => isCurrentTenant(t) && (!t.UnitID || !unitIds.has(t.UnitID))),
+    };
+  }
+
+  /**
+   * Recurring charges for many tenants in a few requests. Falls back to one
+   * request per tenant where the bulk filter isn't supported (some versions
+   * answer an unknown filter field with HTTP 500).
+   */
+  private async recurringCharges(tenantIds: number[]): Promise<Map<number, RecurringCharge[]>> {
+    const byTenant = new Map<number, RecurringCharge[]>();
+    try {
+      for (const ids of chunk([...new Set(tenantIds)], 100)) {
+        const rows = await this.client.getAll<RecurringCharge>("/RecurringCharges", {
+          filters: [rql.eq("EntityType", "Tenant"), rql.in("EntityKeyID", ids)],
+          fields: RECURRING_FIELDS,
+        });
+        for (const row of rows) {
+          const id = row.EntityKeyID ?? row.TenantID;
+          if (id === undefined) continue;
+          byTenant.set(id, [...(byTenant.get(id) ?? []), row]);
+        }
+      }
+      return byTenant;
+    } catch (err) {
+      if (!(err instanceof RentManagerError && [400, 404, 405, 500].includes(err.status))) throw err;
+    }
+    const lists = await mapLimit(tenantIds, CONCURRENCY, (id) =>
+      this.client.getAll<RecurringCharge>(`/Tenants/${id}/RecurringCharges`).catch(() => null)
+    );
+    lists.forEach((list, i) => list && byTenant.set(tenantIds[i], list));
+    return byTenant;
   }
 
   async getPortfolioSummary(propertyIds?: number[]): Promise<PropertySummary[]> {
@@ -813,10 +1057,12 @@ export class RentManagerService {
     const [allUnits, tenants] = await Promise.all([
       propertyIds?.length === 1 ? this.getUnits(propertyIds[0], true) : this.getAllUnits(properties),
       this.client.getAll<Tenant>("/Tenants", {
-        filters: [rql.eq("IsActive", true), ...(propertyIds?.length === 1 ? [rql.eq("PropertyID", propertyIds[0])] : [])],
+        filters: [NOT_PAST_TENANTS, ...(propertyIds?.length === 1 ? [rql.eq("PropertyID", propertyIds[0])] : [])],
         fields: TENANT_FIELDS,
       }),
     ]);
+    const { balances } = await this.balancesFor(tenants, { propertyId: propertyIds?.length === 1 ? propertyIds[0] : undefined });
+    const owes = (t: Tenant) => balances.get(t.TenantID)?.balance ?? 0;
     const units = allUnits.filter((u) => u.IsActive !== false && wanted.has(u.PropertyID));
     // Leases carry the move-in/move-out dates that separate notice and pending move-ins from occupied.
     const leases = await this.getLeases(propertyIds?.length === 1 ? propertyIds[0] : undefined);
@@ -834,57 +1080,119 @@ export class RentManagerService {
         if (occ.moveOut) notice++;
       }
       const propTenants = tenants.filter(
-        (t) => (t.PropertyID ?? (t.UnitID ? unitProperty.get(t.UnitID) : undefined)) === property.PropertyID
+        (t) => isCurrentTenant(t) && (t.PropertyID ?? (t.UnitID ? unitProperty.get(t.UnitID) : undefined)) === property.PropertyID
       );
-      const owing = propTenants.filter((t) => (t.CurrentBalance ?? 0) > 0);
+      const owing = propTenants.filter((t) => owes(t) > 0.005);
       return {
         property,
         units: propUnits.length,
         occupied,
         notice,
         vacant: propUnits.length - occupied,
-        receivables: round2(propTenants.reduce((s, t) => s + (t.CurrentBalance ?? 0), 0)),
+        receivables: round2(propTenants.reduce((s, t) => s + owes(t), 0)),
         delinquentCount: owing.length,
-        delinquentAmount: round2(owing.reduce((s, t) => s + (t.CurrentBalance ?? 0), 0)),
+        delinquentAmount: round2(owing.reduce((s, t) => s + owes(t), 0)),
       };
     });
   }
 
   // ── Work orders (Service Manager) ──
 
+  private async lookups(): Promise<Record<"status" | "priority" | "category", Map<number, string>>> {
+    return this.workOrderLookups.get(async () => {
+      const load = async (path: string, idField: string) => {
+        const rows = await this.client.getAll<LookupRow>(path, { fields: [idField, "Name"] }).catch(() => [] as LookupRow[]);
+        return new Map(rows.map((r) => [Number(r[idField]), String(r.Name ?? "")]));
+      };
+      const [status, priority, category] = await Promise.all([
+        load("/ServiceManagerStatuses", "ServiceManagerStatusID"),
+        load("/ServiceManagerPriorities", "ServiceManagerPriorityID"),
+        load("/ServiceManagerCategories", "ServiceManagerCategoryID"),
+      ]);
+      return { status, priority, category };
+    });
+  }
+
+  /**
+   * Issues are linked to properties rather than carrying a PropertyID, so a
+   * property filter goes through the link (Properties.PropertyID). Without a
+   * filter, each active property is queried for its issue IDs to label them.
+   */
   async getWorkOrders(opts: { propertyId?: number; includeClosed: boolean }): Promise<ServiceManagerIssue[]> {
-    const filters: string[] = [];
-    if (!opts.includeClosed) filters.push(rql.eq("IsClosed", false));
-    if (opts.propertyId) filters.push(rql.eq("PropertyID", opts.propertyId));
-    const issues = await this.client.getAll<ServiceManagerIssue>(
-      "/ServiceManagerIssues",
-      { filters, embed: ["Status", "Category", "Priority", "Unit"] },
-      10
-    );
+    const base = opts.includeClosed ? [] : [rql.eq("IsClosed", false)];
+    const fetch = (extra: string[], fields?: string[]) =>
+      this.client.getAll<ServiceManagerIssue>(
+        "/ServiceManagerIssues",
+        { filters: [...base, ...extra], ...(fields ? { fields } : { embed: ["Status", "Category", "Priority"] }) },
+        10
+      );
+    const byProperty = async (propertyId: number, fields?: string[]) => {
+      try {
+        return await fetch([rql.eq("Properties.PropertyID", propertyId)], fields);
+      } catch (err) {
+        if (!isMissingRoute(err)) throw err;
+        return fetch([rql.eq("PropertyID", propertyId)], fields);
+      }
+    };
+
+    const [issues, names] = await Promise.all([opts.propertyId ? byProperty(opts.propertyId) : fetch([]), this.lookups()]);
+    const propertyOf = new Map<number, number>();
+    if (opts.propertyId) {
+      for (const i of issues) propertyOf.set(i.ServiceManagerIssueID, opts.propertyId);
+    } else {
+      const properties = await this.listProperties(false);
+      await mapLimit(properties, CONCURRENCY, async (p) => {
+        const linked = await byProperty(p.PropertyID, ["ServiceManagerIssueID"]).catch(() => [] as ServiceManagerIssue[]);
+        for (const i of linked) propertyOf.set(i.ServiceManagerIssueID, p.PropertyID);
+      });
+    }
+
+    for (const issue of issues) {
+      issue.PropertyID ??= propertyOf.get(issue.ServiceManagerIssueID);
+      if (!issue.Status?.Name && issue.StatusID !== undefined) issue.Status = { Name: names.status.get(issue.StatusID) };
+      if (!issue.Priority?.Name && issue.PriorityID !== undefined) issue.Priority = { Name: names.priority.get(issue.PriorityID) };
+      if (!issue.Category?.Name && issue.CategoryID !== undefined) issue.Category = { Name: names.category.get(issue.CategoryID) };
+    }
     return issues.sort((a, b) => String(b.CreateDate ?? "").localeCompare(String(a.CreateDate ?? "")));
   }
 
+  /**
+   * Creates the issue, then links its property and unit the way Rent Manager
+   * expects (separate LinkProperty / LinkUnit calls). Issues have no tenant
+   * field, so the tenant is named in the description. Link failures don't undo
+   * the issue; they're returned as warnings.
+   */
   async createWorkOrder(input: {
     title: string;
     description: string;
     propertyId: number;
     unitId?: number;
-    tenantId?: number;
+    tenant?: Tenant;
     categoryId?: number;
     priorityId?: number;
     statusId?: number;
-  }): Promise<ServiceManagerIssue | undefined> {
-    const payload: Record<string, unknown> = {
-      Title: input.title,
-      Description: input.description,
-      IsClosed: false,
-      PropertyID: input.propertyId,
-    };
-    if (input.unitId) payload.UnitID = input.unitId;
-    if (input.tenantId) payload.TenantID = input.tenantId;
+  }): Promise<{ issue: ServiceManagerIssue | undefined; warnings: string[] }> {
+    const description = input.tenant
+      ? `${input.description}\n\nTenant: ${tenantName(input.tenant)} (tenant ID ${input.tenant.TenantID})`
+      : input.description;
+    const payload: Record<string, unknown> = { Title: input.title, Description: description, IsClosed: false };
     if (input.categoryId) payload.CategoryID = input.categoryId;
     if (input.priorityId) payload.PriorityID = input.priorityId;
     if (input.statusId) payload.StatusID = input.statusId;
-    return first(await this.client.post<ServiceManagerIssue | ServiceManagerIssue[] | null>("/ServiceManagerIssues", payload));
+    const issue = first(await this.client.post<ServiceManagerIssue | ServiceManagerIssue[] | null>("/ServiceManagerIssues", payload));
+
+    const warnings: string[] = [];
+    const id = issue?.ServiceManagerIssueID;
+    if (!id) return { issue, warnings: ["Rent Manager didn't return the new issue's ID, so the property and lot couldn't be linked."] };
+    const link = async (what: string, path: string, extra: Record<string, number>) => {
+      try {
+        await this.client.post(path, undefined, { extra });
+      } catch (err) {
+        warnings.push(`Couldn't link the ${what}: ${err instanceof Error ? err.message : err}. Link it in Rent Manager.`);
+      }
+    };
+    await link("property", `/ServiceManagerIssues/${id}/LinkProperty`, { propertyID: input.propertyId });
+    if (input.unitId) await link("lot", `/ServiceManagerIssues/${id}/LinkUnit`, { unitID: input.unitId });
+    return { issue, warnings };
   }
 }

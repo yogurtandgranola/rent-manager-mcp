@@ -63,6 +63,7 @@ test("builds RQL query parameters with the names Rent Manager expects", async ()
   assert.equal(q.get("filters"), "PropertyID,eq,3;LastName,ct,Smith");
   assert.equal(q.get("fields"), "TenantID,Name");
   assert.equal(q.get("embed"), "Leases");
+  assert.equal(q.get("embeds"), "Leases");
   assert.equal(q.get("orderby"), "Name");
 });
 
