@@ -108,5 +108,6 @@ All changes happen in Render: open the service, click **Environment**, edit, the
 | Google says "access blocked: app is restricted to users within its organization" | Same: they used an account outside your Workspace |
 | Claude says the connector failed or timed out | Open the Render address + `/health`. If it doesn't load, check Render's **Logs** tab; a missing setting is named there |
 | Tools return "Authentication failed" | Rent Manager username, password, corporate ID or location ID is wrong |
+| Claude says "Couldn't register with ... sign-in service" | Open Render's **Logs** tab and try **Connect** again. Look for lines starting with `[http] POST /register`: the status and message after the arrow say what went wrong |
 | Claude shows "Redirect URI not allowed" when connecting | Anthropic changed its callback address. Add a setting `EXTRA_REDIRECT_HOSTS` with the host named in the message |
 | Editors don't see the note/work order tools | Their email isn't in `EDITOR_EMAILS` exactly, or they need to disconnect and reconnect in Claude |
