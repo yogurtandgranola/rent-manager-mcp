@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Response } from "express";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
 import { InvalidClientMetadataError, InvalidGrantError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
@@ -61,14 +61,27 @@ const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 // ── Sealing ──
 
-type Purpose = "client" | "login" | "code" | "access" | "refresh";
+type Purpose = "login" | "code" | "access" | "refresh";
 
 export class Sealer {
   private readonly key: Buffer;
+  private readonly macKey: Buffer;
 
   constructor(secret: string) {
     if (secret.length < 32) throw new Error("AUTH_SECRET must be at least 32 characters.");
     this.key = Buffer.from(hkdfSync("sha256", secret, "rent-manager-mcp", "seal-v1", 32));
+    this.macKey = Buffer.from(hkdfSync("sha256", secret, "rent-manager-mcp", "mac-v1", 32));
+  }
+
+  /** Short keyed signature, for values that must stay compact (client IDs, client secrets). */
+  mac(purpose: string, value: string, length = 22): string {
+    return createHmac("sha256", this.macKey).update(`${purpose}:${value}`).digest("base64url").slice(0, length);
+  }
+
+  macMatches(purpose: string, value: string, tag: string, length = 22): boolean {
+    const expected = Buffer.from(this.mac(purpose, value, length));
+    const given = Buffer.from(tag);
+    return expected.length === given.length && timingSafeEqual(expected, given);
   }
 
   seal(purpose: Purpose, payload: object, ttlSeconds?: number): string {
@@ -126,6 +139,13 @@ export function isEditor(config: AuthConfig, email: string): boolean {
 
 // ── Payloads ──
 
+/** What a client ID carries: redirect URIs, public (1) or confidential (0), issued-at. */
+interface CompactClient {
+  r: string[];
+  p: 0 | 1;
+  t: number;
+}
+
 interface LoginState {
   clientId: string;
   redirectUri: string;
@@ -164,14 +184,36 @@ export class GoogleOAuthProvider implements OAuthServerProvider {
   }
 
   /**
-   * Dynamic client registration without a database: the client ID is the
-   * sealed registration itself, so any instance can read it back.
+   * Dynamic client registration without a database. The client ID is a short
+   * signed record of the redirect URIs and whether the client is public:
+   * "<base64url JSON>.<signature>", about 130 characters for Claude. Other
+   * metadata (name, logo) isn't kept because nothing here uses it. A
+   * confidential client's secret is derived from its ID, so it needn't be
+   * stored either.
    */
   get clientsStore(): OAuthRegisteredClientsStore {
+    const describe = (clientId: string, record: CompactClient): OAuthClientInformationFull => {
+      const isPublic = record.p === 1;
+      return {
+        client_id: clientId,
+        client_id_issued_at: record.t,
+        redirect_uris: record.r,
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: isPublic ? "none" : "client_secret_post",
+        ...(isPublic ? {} : { client_secret: this.sealer.mac("client-secret", clientId, 43), client_secret_expires_at: 0 }),
+      };
+    };
     return {
       getClient: (clientId: string) => {
-        const client = this.sealer.unseal<OAuthClientInformationFull>("client", clientId);
-        return client ? { ...client, client_id: clientId } : undefined;
+        const [body, tag] = clientId.split(".");
+        if (!body || !tag || !this.sealer.macMatches("client", body, tag)) return undefined;
+        try {
+          const record = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as CompactClient;
+          return Array.isArray(record.r) ? describe(clientId, record) : undefined;
+        } catch {
+          return undefined;
+        }
       },
       registerClient: (client) => {
         const bad = client.redirect_uris.filter((u) => !isAllowedRedirect(String(u), this.config.extraRedirectHosts));
@@ -181,10 +223,17 @@ export class GoogleOAuthProvider implements OAuthServerProvider {
             `Redirect URI not allowed: ${bad.join(", ")}. Only Claude's callback addresses are accepted (set EXTRA_REDIRECT_HOSTS to add one).`
           );
         }
-        const { client_id: _ignored, ...metadata } = client as OAuthClientInformationFull;
-        const issuedAt = now();
-        const full = { ...metadata, client_id_issued_at: issuedAt } as OAuthClientInformationFull;
-        return { ...full, client_id: this.sealer.seal("client", { ...full, client_id: "" }) };
+        const record: CompactClient = {
+          r: client.redirect_uris.map(String),
+          p: client.token_endpoint_auth_method === "none" ? 1 : 0,
+          t: now(),
+        };
+        const body = Buffer.from(JSON.stringify(record)).toString("base64url");
+        const clientId = `${body}.${this.sealer.mac("client", body)}`;
+        const registered = describe(clientId, record);
+        console.error(`[auth] registered ${record.p ? "public" : "confidential"} client "${client.client_name ?? "unnamed"}" for ${record.r.join(", ")}`);
+        // Echo the requested name back so the client sees what it registered.
+        return { ...registered, ...(client.client_name ? { client_name: client.client_name } : {}) };
       },
     };
   }

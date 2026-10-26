@@ -270,3 +270,73 @@ test("hosted config fails closed", () => {
   assert.throws(() => loadAuthConfig({ ...env, PUBLIC_URL: "http://rm.example.com" }), /https/);
   assert.equal(loadAuthConfig({ ...env, PUBLIC_URL: "", RENDER_EXTERNAL_URL: "https://x.onrender.com" }).publicUrl.host, "x.onrender.com");
 });
+
+async function registerConfidential(): Promise<{ client_id: string; client_secret: string }> {
+  // The shape claude.ai sends: a confidential client using client_secret_post.
+  const res = await fetch(`${base}/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Claude",
+      redirect_uris: [CLAUDE_CALLBACK],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "client_secret_post",
+    }),
+  });
+  assert.equal(res.status, 201);
+  return (await res.json()) as { client_id: string; client_secret: string };
+}
+
+test("client IDs are short and secrets are stable", async () => {
+  const client = await registerConfidential();
+  assert.ok(client.client_id.length < 200, `client_id is ${client.client_id.length} chars`);
+  assert.ok(client.client_secret.length >= 40);
+  const meta = await (await fetch(`${base}/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ redirect_uris: [CLAUDE_CALLBACK], token_endpoint_auth_method: "none" }),
+  })).json();
+  assert.equal(meta.client_secret, undefined);
+});
+
+test("confidential clients can sign in with the secret in the form or as Basic auth", async () => {
+  for (const style of ["post", "basic"] as const) {
+    const client = await registerConfidential();
+    const { callback, verifier } = await signIn(client.client_id, { email: "manager@cornellcommunities.com", hd: "cornellcommunities.com" });
+    const code = new URL(callback.headers.get("location")!).searchParams.get("code")!;
+    const form = { grant_type: "authorization_code", code, code_verifier: verifier, redirect_uri: CLAUDE_CALLBACK };
+    const res = await fetch(`${base}/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        ...(style === "basic"
+          ? { Authorization: `Basic ${Buffer.from(`${encodeURIComponent(client.client_id)}:${encodeURIComponent(client.client_secret)}`).toString("base64")}` }
+          : {}),
+      },
+      body: new URLSearchParams(style === "post" ? { ...form, client_id: client.client_id, client_secret: client.client_secret } : form),
+    });
+    assert.equal(res.status, 200, `${style}: ${await res.text()}`);
+  }
+});
+
+test("a confidential client's wrong secret or a tampered client ID is refused", async () => {
+  const client = await registerConfidential();
+  const { callback, verifier } = await signIn(client.client_id, { email: "manager@cornellcommunities.com", hd: "cornellcommunities.com" });
+  const code = new URL(callback.headers.get("location")!).searchParams.get("code")!;
+  const wrong = await tokenRequest({ grant_type: "authorization_code", code, code_verifier: verifier, client_id: client.client_id, client_secret: "nope", redirect_uri: CLAUDE_CALLBACK });
+  assert.equal(wrong.status, 400);
+
+  // Swap in an attacker's redirect but keep the old signature.
+  const [, tag] = client.client_id.split(".");
+  const forgedBody = Buffer.from(JSON.stringify({ r: ["https://evil.example/cb"], p: 1, t: 0 })).toString("base64url");
+  const res = await fetch(
+    `${base}/authorize?${new URLSearchParams({ response_type: "code", client_id: `${forgedBody}.${tag}`, redirect_uri: "https://evil.example/cb", code_challenge: "x".repeat(43), code_challenge_method: "S256" })}`,
+    { redirect: "manual" }
+  );
+  assert.notEqual(res.status, 302);
+});
+
+test("many registrations in a row are not rate limited", async () => {
+  for (let i = 0; i < 25; i++) await registerConfidential();
+});

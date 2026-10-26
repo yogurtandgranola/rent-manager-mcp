@@ -25,9 +25,42 @@ export function createHttpApp(service: RentManagerService, provider: GoogleOAuth
   const { config } = provider;
   const mcpUrl = new URL(MCP_PATH, config.publicUrl);
   const app = express();
-  // Render and similar hosts sit behind one proxy; rate limiting needs the real client IP.
-  app.set("trust proxy", 1);
+  app.set("trust proxy", true);
   app.disable("x-powered-by");
+
+  // One line per sign-in step and MCP call, so a failed connection can be
+  // traced in the host's logs. OAuth error codes are logged; secrets never are.
+  app.use((req, res, next) => {
+    if (req.path === "/health") return next();
+    let detail = "";
+    const json = res.json.bind(res);
+    res.json = (body: unknown) => {
+      if (res.statusCode >= 400 && body && typeof body === "object") {
+        const { error, error_description } = body as { error?: unknown; error_description?: unknown };
+        if (error) detail = ` ${String(error)}${error_description ? `: ${String(error_description).slice(0, 300)}` : ""}`;
+      }
+      return json(body);
+    };
+    // originalUrl, because routers mounted by the SDK rewrite req.path; the query string may hold codes, so drop it.
+    const path = req.originalUrl.split("?")[0];
+    res.on("finish", () => console.error(`[http] ${req.method} ${path} -> ${res.statusCode}${detail} (from ${req.ip})`));
+    next();
+  });
+
+  // RFC 6749 lets clients send their secret as HTTP Basic auth; the SDK's
+  // token endpoint only reads it from the form body, so copy it there.
+  app.use(["/token", "/revoke"], express.urlencoded({ extended: false }), (req, _res, next) => {
+    const header = req.headers.authorization ?? "";
+    if (header.startsWith("Basic ") && req.body && typeof req.body === "object" && !req.body.client_id) {
+      const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+      const split = decoded.indexOf(":");
+      if (split > 0) {
+        req.body.client_id = decodeURIComponent(decoded.slice(0, split));
+        req.body.client_secret = decodeURIComponent(decoded.slice(split + 1));
+      }
+    }
+    next();
+  });
 
   app.get("/health", (_req, res) => {
     res.json({ ok: true, version });
@@ -39,7 +72,12 @@ export function createHttpApp(service: RentManagerService, provider: GoogleOAuth
       issuerUrl: config.publicUrl,
       resourceServerUrl: mcpUrl,
       resourceName: "Rent Manager",
-      clientRegistrationOptions: { clientSecretExpirySeconds: 0 },
+      // Registration is stateless and cheap, and every Claude user arrives from
+      // Anthropic's few egress IPs (often seen as one proxy IP), so a
+      // per-IP limit would lock the whole team out after a handful of connects.
+      clientRegistrationOptions: { clientSecretExpirySeconds: 0, rateLimit: false },
+      authorizationOptions: { rateLimit: { windowMs: 15 * 60_000, max: 500, validate: { trustProxy: false } } },
+      tokenOptions: { rateLimit: { windowMs: 15 * 60_000, max: 1000, validate: { trustProxy: false } } },
     })
   );
 
