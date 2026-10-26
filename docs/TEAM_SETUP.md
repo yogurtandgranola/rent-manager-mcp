@@ -54,8 +54,10 @@ This tells Google that your connector is allowed to ask people to sign in.
    | `EDITOR_EMAILS` | Your own company email. Add others separated by commas if more people should be able to write |
 
 5. Click **Apply**. Render builds and starts the server, which takes a few minutes.
-6. When it says **Live**, open the service. Near the top is its address, something like `https://rent-manager-mcp.onrender.com`. Copy it.
-7. Check it works: open that address with `/health` on the end. You should see `{"ok":true,...}`.
+6. When it says **Live**, open the service. Near the top, under the name, is its address, something like `https://rent-manager-mcp-ab12.onrender.com`. Copy it exactly.
+
+   > **Use your own address, not the example.** Render addresses are shared by all Render customers, so yours usually ends in a few extra letters. `rent-manager-mcp.onrender.com` without them belongs to someone else.
+7. Check it works: open that address with `/health` on the end. You should see `{"ok":true,...}` along with the exact connector URL to give Claude. If you see anything else, such as `{"error":"not found"}`, you're looking at a different server.
 
 > If Rent Manager only accepts connections from approved IP addresses, open the service in Render, click **Connect**, then **Outbound**, and send those IP addresses to Rent Manager support.
 
@@ -63,7 +65,7 @@ This tells Google that your connector is allowed to ask people to sign in.
 
 1. Go back to <https://console.cloud.google.com>, then **Google Auth Platform**, then **Clients**, and click **Claude connector**.
 2. Under **Authorized redirect URIs**, click **Add URI** and paste your Render address followed by `/oauth/google/callback`, for example:
-   `https://rent-manager-mcp.onrender.com/oauth/google/callback`
+   `https://rent-manager-mcp-ab12.onrender.com/oauth/google/callback`
 3. Click **Save**. Google says changes can take a few minutes.
 
 ## Part 4: Add it to Claude (5 minutes)
@@ -72,7 +74,7 @@ This tells Google that your connector is allowed to ask people to sign in.
 
 1. In Claude on the web, open **Settings** (or **Admin settings**), then **Connectors**.
 2. Click **Add**, then **Custom**, then **Web**.
-3. Name: `Rent Manager`. URL: your Render address followed by `/mcp`, for example `https://rent-manager-mcp.onrender.com/mcp`
+3. Name: `Rent Manager`. URL: your Render address followed by `/mcp`, for example `https://rent-manager-mcp-ab12.onrender.com/mcp`. The `/health` page from Part 2 shows the exact URL
 4. Click **Add**.
 
 **Each team member, including you:**

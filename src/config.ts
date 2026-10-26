@@ -64,7 +64,7 @@ function required(name: string, env: NodeJS.ProcessEnv): string {
 export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig {
   // Render sets RENDER_EXTERNAL_URL automatically.
   const rawUrl = env.PUBLIC_URL?.trim() || env.RENDER_EXTERNAL_URL?.trim();
-  if (!rawUrl) throw new Error("PUBLIC_URL is required when running the hosted (--http) server, e.g. https://rent-manager-mcp.onrender.com");
+  if (!rawUrl) throw new Error("PUBLIC_URL is required when running the hosted (--http) server, e.g. https://rent-manager-mcp-ab12.onrender.com");
   const publicUrl = new URL(rawUrl);
   const isLocal = ["localhost", "127.0.0.1"].includes(publicUrl.hostname);
   if (publicUrl.protocol !== "https:" && !isLocal) throw new Error("PUBLIC_URL must use https://");

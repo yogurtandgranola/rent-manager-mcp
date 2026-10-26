@@ -15,7 +15,7 @@ import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextproto
 // anyone out. Rotating AUTH_SECRET signs everyone out at once.
 
 export interface AuthConfig {
-  /** Public base URL of this server, e.g. https://rent-manager-mcp.onrender.com */
+  /** Public base URL of this server, e.g. https://rent-manager-mcp-ab12.onrender.com */
   publicUrl: URL;
   secret: string;
   googleClientId: string;

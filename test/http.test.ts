@@ -128,6 +128,13 @@ async function mcpClient(accessToken: string) {
   return client;
 }
 
+test("health shows the URLs to paste into Claude and Google", async () => {
+  const health = await (await fetch(`${base}/health`)).json();
+  assert.equal(health.ok, true);
+  assert.equal(health.connectorUrl, `${base}/mcp`);
+  assert.equal(health.googleRedirectUri, `${base}/oauth/google/callback`);
+});
+
 test("advertises OAuth metadata for Claude to discover", async () => {
   const resource = await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json();
   assert.equal(resource.resource, `${base}/mcp`);
